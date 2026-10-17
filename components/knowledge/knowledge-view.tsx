@@ -23,7 +23,8 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { getBot, sources as initialSources } from "@/lib/mock/data";
+import { createFileSource, createQaSource, createUrlSource, deleteSources, getSourceStatuses, resyncSource } from "@/lib/actions/sources";
+import { createClient } from "@/lib/supabase/client";
 import { ACCEPTED_EXTENSIONS, MAX_FILE_MB, qaSchema, urlSourceSchema, type QaValues, type UrlSourceValues } from "@/lib/validations/knowledge";
 import type { Source, SourceType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -32,8 +33,9 @@ const typeIcon = { file: FileText, url: Globe, qa: MessageSquareQuote } as const
 
 interface Upload { id: string; name: string; progress: number }
 
-export function KnowledgeView() {
+export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { initialSources: Source[]; bots: { id: string; name: string }[]; demo: boolean; workspaceId: string }) {
   const [items, setItems] = React.useState<Source[]>(initialSources);
+  const botName = React.useCallback((id: string) => bots.find((b) => b.id === id)?.name, [bots]);
   const [tab, setTab] = React.useState<SourceType>("file");
   const [detail, setDetail] = React.useState<Source | null>(null);
   const [toDelete, setToDelete] = React.useState<Source | null>(null);
@@ -42,21 +44,77 @@ export function KnowledgeView() {
   const [dragging, setDragging] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  // Simulates the pending → processing → ready lifecycle until the real pipeline lands (Phase 3).
+  // Demo mode only: simulates the pending → processing → ready lifecycle.
   React.useEffect(() => {
+    if (!demo) return;
     const t = setInterval(() => {
       setItems((prev) => prev.map((s) => (s.status === "processing" && s.id !== "src_3" ? { ...s, status: "ready", lastSyncedAt: new Date().toISOString() } : s)));
     }, 4000);
     return () => clearInterval(t);
-  }, []);
+  }, [demo]);
+
+  // Real mode: poll while anything is still being processed server-side.
+  const pendingIds = items.filter((s) => s.status === "pending" || s.status === "processing").map((s) => s.id).join(",");
+  React.useEffect(() => {
+    if (demo || !pendingIds) return;
+    const t = setInterval(async () => {
+      const res = await getSourceStatuses(pendingIds.split(","));
+      if (!res.ok) return;
+      const byId = new Map(res.data.map((r) => [r.id, r]));
+      setItems((prev) => prev.map((s) => (byId.has(s.id) ? { ...s, ...byId.get(s.id) } : s)));
+    }, 3000);
+    return () => clearInterval(t);
+  }, [demo, pendingIds]);
 
   function addSource(partial: Omit<Source, "id" | "status" | "chunkCount" | "lastSyncedAt" | "botIds">) {
     const s: Source = { id: `src_${Date.now()}`, status: "processing", chunkCount: 0, lastSyncedAt: null, botIds: [], ...partial };
     setItems((prev) => [s, ...prev]);
   }
 
+  const resync = React.useCallback(async (source: Source) => {
+    const res = await resyncSource(source.id);
+    if (!res.ok) return void toast.error(res.error);
+    setItems((p) => p.map((s) => (s.id === source.id ? { ...s, status: demo ? "processing" : "pending", error: undefined } : s)));
+    toast.success("Re-sync queued");
+  }, [demo]);
+
+  async function remove(ids: string[]) {
+    const res = await deleteSources(ids);
+    if (!res.ok) return false;
+    setItems((p) => p.filter((s) => !ids.includes(s.id)));
+    return true;
+  }
+
+  async function createRemote(create: () => ReturnType<typeof createQaSource>, success: string) {
+    const res = await create();
+    if (!res.ok) return void toast.error(res.error);
+    setItems((prev) => [demo ? { ...res.data, status: "processing" } : res.data, ...prev]);
+    toast.success(success);
+    return true;
+  }
+
+  /** Uploads straight to Storage (no server body-size limit), then registers the source to start ingestion. */
+  async function uploadFile(file: File) {
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    if (!ACCEPTED_EXTENSIONS.includes(ext)) return void toast.error(`${file.name}: unsupported file type`);
+    if (file.size > MAX_FILE_MB * 1024 * 1024) return void toast.error(`${file.name}: larger than ${MAX_FILE_MB} MB`);
+    const id = `up_${Date.now()}_${file.name}`;
+    setUploads((u) => [...u, { id, name: file.name, progress: 30 }]);
+    try {
+      const safe = file.name.replace(/[^\w.-]+/g, "_");
+      const path = `${workspaceId}/${crypto.randomUUID()}-${safe}`;
+      const { error } = await createClient().storage.from("documents").upload(path, file, { contentType: file.type || undefined });
+      if (error) return void toast.error(`${file.name}: ${error.message}`);
+      setUploads((u) => u.map((x) => (x.id === id ? { ...x, progress: 80 } : x)));
+      await createRemote(() => createFileSource({ path, name: file.name, sizeBytes: file.size }), `${file.name} uploaded — processing started`);
+    } finally {
+      setUploads((u) => u.filter((x) => x.id !== id));
+    }
+  }
+
   function handleFiles(files: FileList | null) {
     if (!files) return;
+    if (!demo) return void Array.from(files).forEach((file) => void uploadFile(file));
     Array.from(files).forEach((file) => {
       const ext = "." + file.name.split(".").pop()?.toLowerCase();
       if (!ACCEPTED_EXTENSIONS.includes(ext)) return void toast.error(`${file.name}: unsupported file type`);
@@ -95,7 +153,7 @@ export function KnowledgeView() {
     { accessorKey: "lastSyncedAt", header: "Last synced", cell: ({ row }) => <span className="text-muted-foreground">{row.original.lastSyncedAt ? formatRelative(row.original.lastSyncedAt) : "—"}</span> },
     {
       id: "bots", header: "Linked bots",
-      cell: ({ row }) => <span className="text-muted-foreground">{row.original.botIds.map((id) => getBot(id)?.name).filter(Boolean).join(", ") || "—"}</span>,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.botIds.map((id) => botName(id)).filter(Boolean).join(", ") || "—"}</span>,
     },
     {
       id: "actions", header: () => <span className="sr-only">Actions</span>,
@@ -106,17 +164,14 @@ export function KnowledgeView() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onClick={() => setDetail(row.original)}><Eye /> View chunks</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => {
-              setItems((p) => p.map((s) => (s.id === row.original.id ? { ...s, status: "processing", error: undefined } : s)));
-              toast.success("Re-sync started");
-            }}><RefreshCw /> Re-sync</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void resync(row.original)}><RefreshCw /> Re-sync</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => setToDelete(row.original)}><Trash2 /> Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ),
     },
-  ], []);
+  ], [botName, resync]);
 
   const filtered = items.filter((s) => s.type === tab);
   const empty = {
@@ -165,7 +220,7 @@ export function KnowledgeView() {
           )}
         </TabsContent>
 
-        <TabsContent value="url"><WebsiteForm onAdd={(v) => { addSource({ type: "url", name: v.url, url: v.url, sizeBytes: 0 }); toast.success("Crawl started"); }} /></TabsContent>
+        <TabsContent value="url"><WebsiteForm onAdd={async (v) => createRemote(() => createUrlSource(v), demo ? "Crawl started" : "Website added — crawling started")} /></TabsContent>
         <TabsContent value="qa" className="hidden" />
       </Tabs>
 
@@ -178,32 +233,32 @@ export function KnowledgeView() {
         onRowClick={setDetail}
         emptyState={<EmptyState className="m-4 border-0" {...empty} action={tab === "qa" ? <Button onClick={() => setQaOpen(true)}><Plus /> Add Q&A</Button> : undefined} />}
         bulkActions={(selected, clear) => (
-          <Button size="sm" variant="outline" onClick={() => { setItems((p) => p.filter((s) => !selected.includes(s))); clear(); toast.success(`${selected.length} source(s) deleted`); }}>
+          <Button size="sm" variant="outline" onClick={async () => { if (await remove(selected.map((s) => s.id))) { clear(); toast.success(`${selected.length} source(s) deleted`); } else toast.error("Couldn't delete the selected sources"); }}>
             <Trash2 /> Delete
           </Button>
         )}
       />
 
-      <QaDialog open={qaOpen} onOpenChange={setQaOpen} onSave={(v) => { addSource({ type: "qa", name: v.question, question: v.question, answer: v.answer, sizeBytes: v.question.length + v.answer.length }); toast.success("Q&A saved"); setQaOpen(false); }} />
-      <SourceSheet source={detail} onOpenChange={(o) => !o && setDetail(null)} />
+      <QaDialog open={qaOpen} onOpenChange={setQaOpen} onSave={async (v) => { if (await createRemote(() => createQaSource(v), "Q&A saved")) setQaOpen(false); }} />
+      <SourceSheet source={detail} botNames={bots} onOpenChange={(o) => !o && setDetail(null)} />
       <ConfirmDialog
         open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}
         title="Delete this source?"
         description={`“${toDelete?.name}” and its ${toDelete?.chunkCount ?? 0} chunks will be permanently removed. Linked bots will stop using it.`}
         confirmLabel="Delete source"
-        onConfirm={() => { setItems((p) => p.filter((s) => s.id !== toDelete?.id)); toast.success("Source deleted"); setToDelete(null); }}
+        onConfirm={async () => { if (toDelete && (await remove([toDelete.id]))) toast.success("Source deleted"); else toast.error("Couldn't delete the source"); setToDelete(null); }}
       />
     </>
   );
 }
 
-function WebsiteForm({ onAdd }: { onAdd: (v: UrlSourceValues) => void }) {
+function WebsiteForm({ onAdd }: { onAdd: (v: UrlSourceValues) => Promise<boolean | void> }) {
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<UrlSourceValues>({
     resolver: zodResolver(urlSourceSchema) as never, defaultValues: { url: "", maxPages: 50 },
   });
   return (
     <form
-      onSubmit={handleSubmit(async (v) => { await new Promise((r) => setTimeout(r, 400)); onAdd(v); reset(); })}
+      onSubmit={handleSubmit(async (v) => { if (await onAdd(v)) reset(); })}
       className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-4 sm:flex-row sm:items-start"
       noValidate
     >
@@ -223,7 +278,7 @@ function WebsiteForm({ onAdd }: { onAdd: (v: UrlSourceValues) => void }) {
 }
 
 export function QaDialog({ open, onOpenChange, onSave, initial }: {
-  open: boolean; onOpenChange: (o: boolean) => void; onSave: (v: QaValues) => void; initial?: Partial<QaValues>;
+  open: boolean; onOpenChange: (o: boolean) => void; onSave: (v: QaValues) => void | Promise<void>; initial?: Partial<QaValues>;
 }) {
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<QaValues>({
     resolver: zodResolver(qaSchema) as never, defaultValues: { question: initial?.question ?? "", answer: initial?.answer ?? "" },
@@ -232,7 +287,7 @@ export function QaDialog({ open, onOpenChange, onSave, initial }: {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
-        <form onSubmit={handleSubmit(async (v) => { await new Promise((r) => setTimeout(r, 300)); onSave(v); })} className="space-y-4" noValidate>
+        <form onSubmit={handleSubmit(async (v) => { await onSave(v); })} className="space-y-4" noValidate>
           <DialogHeader>
             <DialogTitle>Curated Q&A</DialogTitle>
             <DialogDescription>Exact answers are retrieved with priority over document chunks.</DialogDescription>

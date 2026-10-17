@@ -6,26 +6,37 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { chunksFor, getBot } from "@/lib/mock/data";
+import { getSourceChunks } from "@/lib/actions/sources";
 import { formatBytes, formatRelative } from "@/lib/format";
-import type { Source } from "@/lib/types";
+import type { Chunk, Source } from "@/lib/types";
 
 const PAGE = 5;
 
-export function SourceSheet({ source, onOpenChange }: { source: Source | null; onOpenChange: (open: boolean) => void }) {
+export function SourceSheet({ source, botNames, onOpenChange }: { source: Source | null; botNames: { id: string; name: string }[]; onOpenChange: (open: boolean) => void }) {
   // Page is keyed by source id so switching sources resets to page 1 without an effect.
   const [pageState, setPageState] = React.useState<{ id: string | null; page: number }>({ id: null, page: 0 });
   const page = pageState.id === source?.id ? pageState.page : 0;
   const setPage = (update: (p: number) => number) => setPageState({ id: source?.id ?? null, page: update(page) });
 
-  const chunks = React.useMemo(() => (source ? chunksFor(source.id, Math.min(source.chunkCount, 24)) : []), [source]);
+  // Chunks are fetched per source; `loaded` records which source they belong to so a stale list never shows.
+  const [loaded, setLoaded] = React.useState<{ id: string; chunks: Chunk[] } | null>(null);
+  const sourceId = source?.id;
+  const needsChunks = !!source && source.type !== "qa" && source.chunkCount > 0;
+  React.useEffect(() => {
+    if (!sourceId || !needsChunks) return;
+    let cancelled = false;
+    getSourceChunks(sourceId).then((res) => { if (!cancelled && res.ok) setLoaded({ id: sourceId, chunks: res.data }); });
+    return () => { cancelled = true; };
+  }, [sourceId, needsChunks]);
+  const loading = needsChunks && loaded?.id !== sourceId;
+  const chunks = loaded && loaded.id === sourceId ? loaded.chunks : [];
   const pages = Math.max(1, Math.ceil(chunks.length / PAGE));
   const meta = source ? [
     ["Type", source.type.toUpperCase()],
     ["Size", formatBytes(source.sizeBytes)],
     ["Chunks", String(source.chunkCount)],
     ["Last synced", source.lastSyncedAt ? formatRelative(source.lastSyncedAt) : "Never"],
-    ["Linked bots", source.botIds.map((id) => getBot(id)?.name).filter(Boolean).join(", ") || "None"],
+    ["Linked bots", source.botIds.map((id) => botNames.find((b) => b.id === id)?.name).filter(Boolean).join(", ") || "None"],
   ] : [];
 
   return (
@@ -56,7 +67,9 @@ export function SourceSheet({ source, onOpenChange }: { source: Source | null; o
                 ) : (
                   <div className="space-y-3">
                     <h3 className="text-sm font-semibold">Chunks</h3>
-                    {chunks.length === 0 ? (
+                    {loading ? (
+                      <p className="text-sm text-muted-foreground">Loading chunks…</p>
+                    ) : chunks.length === 0 ? (
                       <p className="text-sm text-muted-foreground">No chunks yet — they appear once processing finishes.</p>
                     ) : (
                       <>
