@@ -17,9 +17,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { BotAvatar } from "@/components/shared/bot-avatar";
-import { sources } from "@/lib/mock/data";
+import { saveBot } from "@/lib/actions/bots";
 import { MODELS, botSchema, type BotFormValues } from "@/lib/validations/bot";
-import type { Bot } from "@/lib/types";
+import type { Bot, Source } from "@/lib/types";
 
 function toValues(bot?: Bot): BotFormValues {
   return {
@@ -57,7 +57,7 @@ function SwitchRow({ control, name, label, description }: { control: Control<Bot
   );
 }
 
-export function BotEditor({ bot }: { bot?: Bot }) {
+export function BotEditor({ bot, sources }: { bot?: Bot; sources: Source[] }) {
   const router = useRouter();
   const isNew = !bot;
   const defaults = React.useMemo(() => toValues(bot), [bot]);
@@ -80,10 +80,12 @@ export function BotEditor({ bot }: { bot?: Bot }) {
   }, [unsaved]);
 
   async function onSubmit(values: BotFormValues) {
-    await new Promise((r) => setTimeout(r, 600)); // Phase 2 replaces this with a Server Action.
+    const res = await saveBot(bot?.id ?? null, values);
+    if (!res.ok) return void toast.error(res.error);
     toast.success(isNew ? `“${values.name}” created` : "Changes saved");
     reset(values);
     if (isNew) router.push("/bots");
+    else router.refresh();
   }
 
   return (

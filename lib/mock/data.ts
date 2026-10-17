@@ -2,6 +2,8 @@ import type {
   Bot, Chunk, Conversation, Lead, Message, Source, TeamMember, UnansweredQuestion,
 } from "@/lib/types";
 
+import { resolveWidget } from "@/lib/validations/widget";
+
 /** Anchor date so mock data is deterministic (no hydration mismatches). */
 const NOW = new Date("2026-10-16T09:30:00Z").getTime();
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -17,7 +19,7 @@ function rng(seed: number) {
 export const workspace = { id: "ws_1", name: "Acme Inc.", plan: "Pro", timezone: "Asia/Ho_Chi_Minh" };
 export const currentUser = { name: "Linh Tran", email: "linh@acme.com", role: "owner" as const };
 
-export const bots: Bot[] = [
+const rawBots: Omit<Bot, "widget">[] = [
   {
     id: "bot_1", publicId: "bt_8fK2mQ", name: "Support Assistant",
     description: "Answers customer questions about orders, shipping and returns.",
@@ -58,6 +60,11 @@ export const bots: Bot[] = [
     features: { citations: true, leadCapture: false, leadFields: ["email"], leadTiming: "start", handoffEmail: "hr@acme.com", feedback: false },
   },
 ];
+
+export const bots: Bot[] = rawBots.map((b) => ({
+  ...b,
+  widget: resolveWidget(b.id === "bot_1" ? { domains: ["acme.com"] } : null, { name: b.name, welcomeMessage: b.welcomeMessage }),
+}));
 
 export const sources: Source[] = [
   { id: "src_1", type: "file", name: "Shipping & Returns Policy.pdf", status: "ready", chunkCount: 42, sizeBytes: 2_340_000, lastSyncedAt: ago(60 * 24 * 3), botIds: ["bot_1"] },

@@ -10,13 +10,12 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DateRangePicker } from "@/components/shared/date-range-picker";
-import { bots, conversations, getBot } from "@/lib/mock/data";
 import { formatDateTime } from "@/lib/format";
 import type { Conversation } from "@/lib/types";
 
-const NOW = new Date("2026-10-16T09:30:00Z").getTime();
-
-export function ConversationsTable() {
+export function ConversationsTable({ conversations, bots, now }: { conversations: Conversation[]; bots: { id: string; name: string }[]; now: string }) {
+  const NOW = React.useMemo(() => new Date(now).getTime(), [now]);
+  const botName = React.useCallback((id: string) => bots.find((b) => b.id === id)?.name, [bots]);
   const router = useRouter();
   const [bot, setBot] = React.useState("all");
   const [rating, setRating] = React.useState("all");
@@ -32,7 +31,7 @@ export function ConversationsTable() {
     if (flag === "unanswered" && !c.unanswered) return false;
     if (range !== "custom" && NOW - new Date(c.startedAt).getTime() > Number(range) * 86_400_000) return false;
     return true;
-  }), [bot, rating, flag, range]);
+  }), [conversations, NOW, bot, rating, flag, range]);
 
   const columns = React.useMemo<ColumnDef<Conversation>[]>(() => [
     {
@@ -44,7 +43,7 @@ export function ConversationsTable() {
         </div>
       ),
     },
-    { id: "bot", header: "Bot", cell: ({ row }) => <span className="text-muted-foreground">{getBot(row.original.botId)?.name}</span> },
+    { id: "bot", header: "Bot", cell: ({ row }) => <span className="text-muted-foreground">{botName(row.original.botId)}</span> },
     {
       accessorKey: "preview", header: "First message",
       cell: ({ row }) => (
@@ -61,7 +60,7 @@ export function ConversationsTable() {
         : row.original.rating === "down" ? <ThumbsDown aria-label="Negative" className="size-4 text-destructive" /> : <span className="text-muted-foreground">—</span>,
     },
     { accessorKey: "startedAt", header: ({ column }) => <SortableHeader column={column}>Started</SortableHeader>, cell: ({ row }) => <span className="text-muted-foreground">{formatDateTime(row.original.startedAt)}</span> },
-  ], []);
+  ], [botName]);
 
   return (
     <DataTable

@@ -11,17 +11,17 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
-import { bots, getBot, leads } from "@/lib/mock/data";
 import type { Lead } from "@/lib/types";
 
 const csvCell = (v: string) => `"${v.replace(/"/g, '""')}"`;
 
-export function LeadsTable() {
+export function LeadsTable({ leads, bots }: { leads: Lead[]; bots: { id: string; name: string }[] }) {
+  const botName = React.useCallback((id: string) => bots.find((b) => b.id === id)?.name, [bots]);
   const [bot, setBot] = React.useState("all");
-  const data = React.useMemo(() => leads.filter((l) => bot === "all" || l.botId === bot), [bot]);
+  const data = React.useMemo(() => leads.filter((l) => bot === "all" || l.botId === bot), [leads, bot]);
 
   function exportCsv() {
-    const rows = [["Name", "Email", "Phone", "Bot", "Conversation", "Captured at"], ...data.map((l) => [l.name, l.email, l.phone, getBot(l.botId)?.name ?? "", l.conversationId, l.capturedAt])];
+    const rows = [["Name", "Email", "Phone", "Bot", "Conversation", "Captured at"], ...data.map((l) => [l.name, l.email, l.phone, botName(l.botId) ?? "", l.conversationId, l.capturedAt])];
     const blob = new Blob([rows.map((r) => r.map(csvCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = Object.assign(document.createElement("a"), { href: url, download: "leads.csv" });
@@ -34,10 +34,10 @@ export function LeadsTable() {
     { accessorKey: "name", header: ({ column }) => <SortableHeader column={column}>Name</SortableHeader>, cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
     { accessorKey: "email", header: "Email", cell: ({ row }) => <a className="hover:underline" href={`mailto:${row.original.email}`}>{row.original.email}</a> },
     { accessorKey: "phone", header: "Phone", cell: ({ row }) => <span className="text-muted-foreground">{row.original.phone || "—"}</span> },
-    { id: "bot", header: "Bot", cell: ({ row }) => <span className="text-muted-foreground">{getBot(row.original.botId)?.name}</span> },
+    { id: "bot", header: "Bot", cell: ({ row }) => <span className="text-muted-foreground">{botName(row.original.botId)}</span> },
     { id: "conv", header: "Conversation", cell: ({ row }) => <Link className="text-primary hover:underline" href={`/conversations/${row.original.conversationId}`}>View chat</Link> },
     { accessorKey: "capturedAt", header: ({ column }) => <SortableHeader column={column}>Captured</SortableHeader>, cell: ({ row }) => <span className="text-muted-foreground">{formatDateTime(row.original.capturedAt)}</span> },
-  ], []);
+  ], [botName]);
 
   return (
     <>

@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getBot } from "@/lib/mock/data";
 import { formatRelative } from "@/lib/format";
 import type { Conversation } from "@/lib/types";
 
-export function RecentConversations({ rows }: { rows: Conversation[] }) {
+export function RecentConversations({ rows, botName }: { rows: Conversation[]; botName: (id: string) => string }) {
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -19,7 +18,7 @@ export function RecentConversations({ rows }: { rows: Conversation[] }) {
           {rows.map((c) => (
             <TableRow key={c.id}>
               <TableCell className="font-medium"><Link className="hover:underline" href={`/conversations/${c.id}`}>{c.visitor}</Link></TableCell>
-              <TableCell className="text-muted-foreground">{getBot(c.botId)?.name}</TableCell>
+              <TableCell className="text-muted-foreground">{botName(c.botId)}</TableCell>
               <TableCell className="max-w-64 truncate">{c.preview}</TableCell>
               <TableCell className="text-right tabular-nums">{c.messageCount}</TableCell>
               <TableCell>

@@ -6,14 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 
-const steps = [
-  { label: "Create your workspace", href: "/settings/general", done: true },
-  { label: "Create your first bot", href: "/bots/new", done: true },
-  { label: "Upload your first document", href: "/knowledge", done: true },
-  { label: "Copy the embed code", href: "/widget", done: false },
-];
-
-export function OnboardingChecklist() {
+export function OnboardingChecklist({ setup }: { setup: { bot: boolean; source: boolean } }) {
+  const steps = [
+    { label: "Create your workspace", href: "/settings/general", done: true },
+    { label: "Create your first bot", href: "/bots/new", done: setup.bot },
+    { label: "Add your first knowledge source", href: "/knowledge", done: setup.source },
+    { label: "Copy the embed code", href: "/widget", done: false },
+  ];
   const done = steps.filter((s) => s.done).length;
   if (done === steps.length) return null;
   return (

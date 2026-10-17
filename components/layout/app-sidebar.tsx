@@ -15,7 +15,7 @@ import {
   SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarRail, useSidebar,
 } from "@/components/ui/sidebar";
 import { navGroups } from "@/components/layout/nav";
-import { currentUser, workspace } from "@/lib/mock/data";
+import type { CurrentUser, Workspace } from "@/lib/types";
 import { isSupabaseConfiguredClient } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/client";
 
@@ -23,7 +23,7 @@ function initials(name: string) {
   return name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-export function AppSidebar() {
+export function AppSidebar({ workspace, user: currentUser }: { workspace: Workspace; user: CurrentUser }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();

@@ -57,14 +57,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
       const v = values as SignupValues;
       const { error } = await supabase.auth.signUp({
         email: v.email, password: v.password,
-        options: { data: { full_name: v.name }, emailRedirectTo: `${location.origin}/dashboard` },
+        options: { data: { full_name: v.name }, emailRedirectTo: `${location.origin}/auth/callback?next=/dashboard` },
       });
       if (error) return void toast.error(error.message);
       toast.success("Account created. Check your inbox to confirm your email.");
       router.push("/dashboard");
     } else {
       const v = values as ForgotValues;
-      const { error } = await supabase.auth.resetPasswordForEmail(v.email, { redirectTo: `${location.origin}/login` });
+      const { error } = await supabase.auth.resetPasswordForEmail(v.email, { redirectTo: `${location.origin}/auth/callback?next=/settings/general` });
       if (error) return void toast.error(error.message);
       toast.success("Password reset link sent. Check your inbox.");
     }
@@ -73,7 +73,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   async function google() {
     if (!isSupabaseConfiguredClient) return void toast.info("Google sign-in needs Supabase configured.");
     const { error } = await createClient().auth.signInWithOAuth({
-      provider: "google", options: { redirectTo: `${location.origin}/dashboard` },
+      provider: "google", options: { redirectTo: `${location.origin}/auth/callback?next=/dashboard` },
     });
     if (error) toast.error(error.message);
   }

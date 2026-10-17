@@ -12,7 +12,9 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DateRangePicker, type RangePreset } from "@/components/shared/date-range-picker";
 import { PageHeader } from "@/components/layout/page-header";
-import { bots, conversations, conversationsPerDay, kpis, messagesByBot, topQuestions, unanswered } from "@/lib/mock/data";
+import type { DashboardInput } from "@/lib/data/analytics";
+import { estimateCostUsd } from "@/lib/pricing";
+import type { Conversation, UnansweredQuestion } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { OnboardingChecklist } from "@/components/dashboard/onboarding-checklist";
 import { RecentConversations } from "@/components/dashboard/recent-conversations";
@@ -20,30 +22,68 @@ import { RecentConversations } from "@/components/dashboard/recent-conversations
 const areaConfig = { conversations: { label: "Conversations", color: "var(--chart-1)" } } satisfies ChartConfig;
 const barConfig = { messages: { label: "Messages", color: "var(--chart-2)" } } satisfies ChartConfig;
 
-export function DashboardView() {
+const DAY = 86_400_000;
+const pct = (cur: number, prev: number) => (prev === 0 ? (cur === 0 ? 0 : 100) : Math.round(((cur - prev) / prev) * 1000) / 10);
+
+export function DashboardView({ input, bots, unanswered, setup }: {
+  input: DashboardInput; bots: { id: string; name: string }[]; unanswered: UnansweredQuestion[]; setup: { bot: boolean; source: boolean };
+}) {
   const [preset, setPreset] = React.useState<RangePreset>("30");
   const [custom, setCustom] = React.useState<DateRange | undefined>();
   const [botId, setBotId] = React.useState("all");
 
+  const now = React.useMemo(() => new Date(input.now).getTime(), [input.now]);
   const days = preset === "custom"
-    ? Math.max(2, custom?.from && custom?.to ? Math.round((+custom.to - +custom.from) / 86_400_000) + 1 : 30)
+    ? Math.max(2, custom?.from && custom?.to ? Math.round((+custom.to - +custom.from) / DAY) + 1 : 30)
     : Number(preset);
-  const factor = (days / 30) * (botId === "all" ? 1 : botId === "bot_1" ? 0.6 : botId === "bot_2" ? 0.3 : 0.1);
-  const series = React.useMemo(() => conversationsPerDay(days).map((d) => ({
-    ...d, conversations: Math.max(1, Math.round(d.conversations * (botId === "all" ? 1 : factor / (days / 30)))),
-  })), [days, botId, factor]);
+  const botName = (id: string) => bots.find((b) => b.id === id)?.name ?? "Unknown bot";
 
-  const scale = (v: string) => {
-    const n = Number(v.replace(/[^0-9.]/g, ""));
-    if (v.includes("%")) return v;
-    const out = Math.round(n * factor * 100) / 100;
-    return v.startsWith("$") ? `$${out.toFixed(2)}` : Math.round(out).toLocaleString();
-  };
-  const barData = messagesByBot
-    .filter((b) => botId === "all" || bots.find((x) => x.id === botId)?.name === b.bot)
-    .map((b) => ({ ...b, messages: Math.round(b.messages * (days / 30)) }));
+  const view = React.useMemo(() => {
+    const inBot = (b: string) => botId === "all" || b === botId;
+    // Whole UTC days: the window ends at the end of today (or of the custom range's last day).
+    const end = preset === "custom" && custom?.to ? Math.floor(custom.to.getTime() / DAY) * DAY + DAY : Math.floor(now / DAY) * DAY + DAY;
+    const start = end - days * DAY;
+    const prevStart = start - days * DAY;
+    const within = (iso: string, from: number, to: number) => { const t = new Date(iso).getTime(); return t >= from && t < to; };
+
+    const convs = input.conversations.filter((c) => inBot(c.botId));
+    const cur = convs.filter((c) => within(c.startedAt, start, end));
+    const prev = convs.filter((c) => within(c.startedAt, prevStart, start));
+    const leadsIn = (from: number, to: number) => input.leads.filter((l) => inBot(l.botId) && within(l.capturedAt, from, to)).length;
+    const tokensIn = (from: number, to: number) => input.tokens.filter((t) => inBot(t.botId) && within(t.at, from, to)).reduce((s, t) => s + t.tokens, 0);
+    const msgs = (rows: Conversation[]) => rows.reduce((s, c) => s + c.messageCount, 0);
+    const answerRate = (rows: Conversation[]) => (rows.length ? ((rows.length - rows.filter((c) => c.unanswered).length) / rows.length) * 100 : 100);
+
+    const kpis = [
+      { key: "conversations", label: "Conversations", value: cur.length.toLocaleString(), delta: pct(cur.length, prev.length) },
+      { key: "messages", label: "Messages", value: msgs(cur).toLocaleString(), delta: pct(msgs(cur), msgs(prev)) },
+      { key: "answerRate", label: "Answer rate", value: `${answerRate(cur).toFixed(1)}%`, delta: Math.round((answerRate(cur) - answerRate(prev)) * 10) / 10 },
+      { key: "leads", label: "Leads captured", value: leadsIn(start, end).toLocaleString(), delta: pct(leadsIn(start, end), leadsIn(prevStart, start)) },
+      { key: "cost", label: "Est. token cost", value: `$${estimateCostUsd(tokensIn(start, end)).toFixed(2)}`, delta: pct(tokensIn(start, end), tokensIn(prevStart, start)) },
+    ];
+
+    const perDay = new Map<string, number>();
+    for (const c of cur) perDay.set(c.startedAt.slice(0, 10), (perDay.get(c.startedAt.slice(0, 10)) ?? 0) + 1);
+    const series = Array.from({ length: days }, (_, i) => {
+      const d = new Date(start + i * DAY);
+      const date = d.toISOString().slice(0, 10);
+      return { date, label: d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }), conversations: perDay.get(date) ?? 0 };
+    });
+
+    const byBot = new Map<string, number>();
+    for (const c of input.conversations.filter((c) => within(c.startedAt, start, end))) byBot.set(c.botId, (byBot.get(c.botId) ?? 0) + c.messageCount);
+    const barData = bots.filter((b) => inBot(b.id)).map((b) => ({ bot: b.name, messages: byBot.get(b.id) ?? 0 }));
+
+    // "Top questions" = the most common opening messages in the period.
+    const asked = new Map<string, number>();
+    for (const c of cur) { const q = c.preview.trim(); if (q) asked.set(q, (asked.get(q) ?? 0) + 1); }
+    const topQuestions = [...asked].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([question, count]) => ({ question, count }));
+
+    return { kpis, series, barData, topQuestions, recent: cur.slice(0, 5) };
+  }, [input, bots, botId, preset, custom, days, now]);
+
   const open = unanswered.filter((u) => u.status === "open" && (botId === "all" || u.botId === botId)).slice(0, 4);
-  const recent = conversations.filter((c) => botId === "all" || c.botId === botId).slice(0, 5);
+  const { kpis, series, barData, topQuestions, recent } = view;
 
   return (
     <>
@@ -64,7 +104,7 @@ export function DashboardView() {
         }
       />
 
-      <OnboardingChecklist />
+      <OnboardingChecklist setup={setup} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {kpis.map((k) => {
@@ -75,7 +115,7 @@ export function DashboardView() {
             <Card key={k.key} className="gap-2 py-4 shadow-none">
               <CardHeader className="px-4"><CardDescription>{k.label}</CardDescription></CardHeader>
               <CardContent className="space-y-1 px-4">
-                <p className="text-2xl font-semibold tabular-nums tracking-tight">{scale(k.value)}</p>
+                <p className="text-2xl font-semibold tabular-nums tracking-tight">{k.value}</p>
                 <p className={cn("flex items-center gap-1 text-xs", good ? "text-success" : "text-destructive")}>
                   {up ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
                   {Math.abs(k.delta)}% <span className="text-muted-foreground">vs previous period</span>
@@ -142,7 +182,7 @@ export function DashboardView() {
                 <li key={q.question} className="flex items-center gap-3 text-sm">
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground">{i + 1}</span>
                   <span className="min-w-0 flex-1 truncate">{q.question}</span>
-                  <Badge variant="secondary" className="tabular-nums">{Math.round(q.count * factor)}</Badge>
+                  <Badge variant="secondary" className="tabular-nums">{q.count}</Badge>
                 </li>
               ))}
             </ol>
@@ -176,7 +216,7 @@ export function DashboardView() {
           </div>
           <Button asChild variant="ghost" size="sm"><Link href="/conversations"><MessageSquare /> View all</Link></Button>
         </CardHeader>
-        <CardContent><RecentConversations rows={recent} /></CardContent>
+        <CardContent><RecentConversations rows={recent} botName={botName} /></CardContent>
       </Card>
     </>
   );

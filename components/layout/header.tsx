@@ -11,26 +11,25 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { CommandMenu } from "@/components/layout/command-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { allNavItems } from "@/components/layout/nav";
-import { bots, conversations } from "@/lib/mock/data";
 
 const SEGMENT_LABELS: Record<string, string> = { new: "New", settings: "Settings", "api-keys": "API Keys", usage: "Usage & Limits" };
 
-function labelFor(segment: string, href: string) {
+function labelFor(segment: string, href: string, bots: { id: string; name: string }[]) {
   const nav = allNavItems.find((n) => n.href === href);
   if (nav) return nav.title;
   if (SEGMENT_LABELS[segment]) return SEGMENT_LABELS[segment];
   const bot = bots.find((b) => b.id === segment);
   if (bot) return bot.name;
-  if (conversations.some((c) => c.id === segment)) return `Conversation ${segment.replace("conv_", "#")}`;
+  if (href.startsWith("/conversations/")) return `Conversation ${segment.replace("conv_", "#").slice(0, 8)}`;
   return segment.charAt(0).toUpperCase() + segment.slice(1);
 }
 
-export function Header() {
+export function Header({ bots }: { bots: { id: string; name: string }[] }) {
   const pathname = usePathname();
   const segments = pathname.split("/").filter(Boolean);
   const crumbs = segments.map((seg, i) => {
     const href = "/" + segments.slice(0, i + 1).join("/");
-    return { href, label: labelFor(seg, href), last: i === segments.length - 1 };
+    return { href, label: labelFor(seg, href, bots), last: i === segments.length - 1 };
   });
 
   return (

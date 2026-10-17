@@ -4,6 +4,8 @@ export type SourceStatus = "pending" | "processing" | "ready" | "failed";
 export type Rating = "up" | "down" | null;
 export type Role = "owner" | "editor" | "viewer";
 
+import type { WidgetSettings } from "@/lib/validations/widget";
+
 export interface Bot {
   id: string;
   publicId: string;
@@ -25,6 +27,7 @@ export interface Bot {
   topK: number;
   similarityThreshold: number;
   sourceIds: string[];
+  widget: WidgetSettings;
   features: {
     citations: boolean;
     leadCapture: boolean;
@@ -117,4 +120,33 @@ export interface TeamMember {
   email: string;
   role: Role;
   status: "active" | "invited";
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  plan: string;
+  timezone: string;
+  monthlySpendLimit: number;
+}
+
+export interface CurrentUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+}
+
+export interface DashboardData {
+  kpis: { key: string; label: string; value: string; delta: number }[];
+  series: { date: string; label: string; conversations: number }[];
+  messagesByBot: { bot: string; botId: string; messages: number }[];
+  topQuestions: { question: string; count: number }[];
+  unanswered: UnansweredQuestion[];
+  recent: Conversation[];
+}
+
+export interface UsageData {
+  byDay: { label: string; tokens: number }[];
+  monthSpendUsd: number;
 }

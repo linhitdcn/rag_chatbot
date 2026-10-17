@@ -7,11 +7,12 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { bots } from "@/lib/mock/data";
+import { listBots } from "@/lib/data/bots";
 
 export const metadata: Metadata = { title: "Chatbots" };
 
-export default function BotsPage() {
+export default async function BotsPage() {
+  const bots = await listBots();
   return (
     <>
       <PageHeader

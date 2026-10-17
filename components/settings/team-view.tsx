@@ -16,11 +16,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { team as initial } from "@/lib/mock/data";
+import { changeMemberRole, inviteMember, removeMember } from "@/lib/actions/workspace";
 import { inviteSchema, type InviteValues } from "@/lib/validations/settings";
 import type { Role, TeamMember } from "@/lib/types";
 
-export function TeamView() {
+export function TeamView({ initial, canManage }: { initial: TeamMember[]; canManage: boolean }) {
   const [members, setMembers] = React.useState<TeamMember[]>(initial);
   const [inviteOpen, setInviteOpen] = React.useState(false);
   const [removing, setRemoving] = React.useState<TeamMember | null>(null);
@@ -29,14 +29,16 @@ export function TeamView() {
   });
 
   async function invite(v: InviteValues) {
-    await new Promise((r) => setTimeout(r, 500));
-    setMembers((m) => [...m, { id: `u${Date.now()}`, name: "—", email: v.email, role: v.role, status: "invited" }]);
-    toast.success(`Invitation sent to ${v.email}`); reset(); setInviteOpen(false);
+    const res = await inviteMember(v);
+    if (!res.ok) return void toast.error(res.error);
+    setMembers((m) => [...m.filter((x) => x.email !== res.data.email), res.data]);
+    toast.success(res.data.status === "active" ? `${v.email} was added to the workspace` : `Invitation sent to ${v.email}`);
+    reset(); setInviteOpen(false);
   }
 
   return (
     <>
-      <PageHeader title="Team" description="Invite teammates and control what they can do." actions={<Button onClick={() => setInviteOpen(true)}><UserPlus /> Invite member</Button>} />
+      <PageHeader title="Team" description="Invite teammates and control what they can do." actions={canManage && <Button onClick={() => setInviteOpen(true)}><UserPlus /> Invite member</Button>} />
       <Card className="max-w-3xl gap-0 divide-y p-0 shadow-none">
         {members.map((m) => (
           <div key={m.id} className="flex items-center gap-3 px-4 py-3">
@@ -46,13 +48,17 @@ export function TeamView() {
               <p className="truncate text-xs text-muted-foreground">{m.name === "—" ? "Invitation pending" : m.email}</p>
             </div>
             {m.status === "invited" && <Badge variant="outline">Invited</Badge>}
-            {m.role === "owner" ? <Badge variant="secondary">Owner</Badge> : (
-              <Select value={m.role} onValueChange={(r) => { setMembers((p) => p.map((x) => (x.id === m.id ? { ...x, role: r as Role } : x))); toast.success("Role updated"); }}>
+            {m.role === "owner" || !canManage ? <Badge variant="secondary" className="capitalize">{m.role}</Badge> : (
+              <Select value={m.role} onValueChange={async (r) => {
+                const res = await changeMemberRole(m.id, r as Exclude<Role, "owner">);
+                if (!res.ok) return void toast.error(res.error);
+                setMembers((p) => p.map((x) => (x.id === m.id ? { ...x, role: r as Role } : x))); toast.success("Role updated");
+              }}>
                 <SelectTrigger size="sm" className="w-28" aria-label={`Role for ${m.email}`}><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value="editor">Editor</SelectItem><SelectItem value="viewer">Viewer</SelectItem></SelectContent>
               </Select>
             )}
-            {m.role !== "owner" ? (
+            {m.role !== "owner" && canManage ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Actions for ${m.email}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end"><DropdownMenuItem variant="destructive" onClick={() => setRemoving(m)}><Trash2 /> Remove</DropdownMenuItem></DropdownMenuContent>
@@ -87,7 +93,13 @@ export function TeamView() {
       <ConfirmDialog
         open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Remove team member?"
         description={`${removing?.email} will immediately lose access to this workspace.`} confirmLabel="Remove"
-        onConfirm={() => { setMembers((m) => m.filter((x) => x.id !== removing?.id)); toast.success("Member removed"); setRemoving(null); }}
+        onConfirm={async () => {
+          if (!removing) return;
+          const res = await removeMember(removing.id);
+          if (!res.ok) toast.error(res.error);
+          else { setMembers((m) => m.filter((x) => x.id !== removing.id)); toast.success("Member removed"); }
+          setRemoving(null);
+        }}
       />
     </>
   );
