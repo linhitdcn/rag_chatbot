@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Bot as BotIcon, MessageCircle, Monitor, Plus, Send, Smartphone, X, Sparkle, HelpCircle } from "lucide-react";
+import Link from "next/link";
+import { Bot as BotIcon, Loader2, MessageCircle, Monitor, Plus, Send, Smartphone, X, Sparkle, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/page-header";
 import { CopyButton } from "@/components/shared/copy-button";
@@ -12,23 +13,39 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { bots } from "@/lib/mock/data";
+import { saveWidgetSettings } from "@/lib/actions/bots";
+import { EmptyState } from "@/components/shared/empty-state";
+import type { Bot } from "@/lib/types";
+import { WIDGET_COLORS } from "@/lib/validations/widget";
 import { cn } from "@/lib/utils";
 
-const COLORS = ["#4f46e5", "#7c3aed", "#0ea5e9", "#059669", "#e11d48", "#18181b"];
+const COLORS = WIDGET_COLORS;
 const ICONS = { chat: MessageCircle, bot: BotIcon, sparkle: Sparkle, help: HelpCircle } as const;
 type IconKey = keyof typeof ICONS;
 
-export function WidgetView() {
+export function WidgetView({ bots }: { bots: Bot[] }) {
+  if (bots.length === 0) {
+    return (
+      <>
+        <PageHeader title="Widget & Embed" description="Customize the chat widget and paste one line of code on your site." />
+        <EmptyState icon={BotIcon} title="Create a bot first" description="The widget embeds one of your chatbots." action={<Button asChild><Link href="/bots/new"><Plus /> Create bot</Link></Button>} />
+      </>
+    );
+  }
+  return <WidgetEditor bots={bots} />;
+}
+
+function WidgetEditor({ bots }: { bots: Bot[] }) {
   const [botId, setBotId] = React.useState(bots[0].id);
   const bot = bots.find((b) => b.id === botId)!;
-  const [color, setColor] = React.useState(COLORS[0]);
-  const [position, setPosition] = React.useState<"right" | "left">("right");
-  const [icon, setIcon] = React.useState<IconKey>("chat");
-  const [title, setTitle] = React.useState(bot.name);
-  const [welcome, setWelcome] = React.useState(bot.welcomeMessage);
-  const [powered, setPowered] = React.useState(true);
-  const [domains, setDomains] = React.useState<string[]>(["acme.com"]);
+  const [color, setColor] = React.useState(bot.widget.color);
+  const [position, setPosition] = React.useState<"right" | "left">(bot.widget.position);
+  const [icon, setIcon] = React.useState<IconKey>(bot.widget.icon);
+  const [title, setTitle] = React.useState(bot.widget.title);
+  const [welcome, setWelcome] = React.useState(bot.widget.welcome);
+  const [powered, setPowered] = React.useState(bot.widget.poweredBy);
+  const [domains, setDomains] = React.useState<string[]>(bot.widget.domains);
+  const [saving, setSaving] = React.useState(false);
   const [domainInput, setDomainInput] = React.useState("");
   const [device, setDevice] = React.useState<"desktop" | "mobile">("desktop");
   const [open, setOpen] = React.useState(true);
@@ -36,6 +53,14 @@ export function WidgetView() {
   const origin = process.env.NEXT_PUBLIC_APP_URL ?? "https://YOUR_DOMAIN";
   const snippet = `<script src="${origin}/widget.js" data-bot-id="${bot.publicId}" defer></script>`;
   const Launcher = ICONS[icon];
+
+  async function save() {
+    setSaving(true);
+    const res = await saveWidgetSettings(bot.id, { color, position, icon, title, welcome, poweredBy: powered, domains });
+    setSaving(false);
+    if (res.ok) toast.success("Widget settings saved");
+    else toast.error(res.error);
+  }
 
   function addDomain() {
     const d = domainInput.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -46,7 +71,7 @@ export function WidgetView() {
 
   return (
     <>
-      <PageHeader title="Widget & Embed" description="Customize the chat widget and paste one line of code on your site." actions={<Button onClick={() => toast.success("Widget settings saved")}>Save changes</Button>} />
+      <PageHeader title="Widget & Embed" description="Customize the chat widget and paste one line of code on your site." actions={<Button disabled={saving} onClick={save}>{saving && <Loader2 className="animate-spin" />} Save changes</Button>} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[400px_minmax(0,1fr)]">
         <div className="space-y-4">
@@ -55,7 +80,11 @@ export function WidgetView() {
             <CardContent className="space-y-5">
               <div className="space-y-1.5">
                 <Label htmlFor="w-bot">Bot</Label>
-                <Select value={botId} onValueChange={(v) => { setBotId(v); const b = bots.find((x) => x.id === v)!; setTitle(b.name); setWelcome(b.welcomeMessage); }}>
+                <Select value={botId} onValueChange={(v) => {
+                  setBotId(v);
+                  const w = bots.find((x) => x.id === v)!.widget;
+                  setColor(w.color); setPosition(w.position); setIcon(w.icon); setTitle(w.title); setWelcome(w.welcome); setPowered(w.poweredBy); setDomains(w.domains);
+                }}>
                   <SelectTrigger id="w-bot" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>{bots.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
                 </Select>
