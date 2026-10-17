@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkPlus, Bot as BotIcon, Clock, Cpu, RotateCcw, Send, Sparkles, User } from "lucide-react";
+import Link from "next/link";
+import { BookmarkPlus, Bot as BotIcon, Clock, Cpu, Plus, RotateCcw, Send, Sparkles, User } from "lucide-react";
 import { toast } from "sonner";
 import { RichText } from "@/components/chat/rich-text";
 import { PageHeader } from "@/components/layout/page-header";
@@ -13,10 +14,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { bots } from "@/lib/mock/data";
+import { createQaSource } from "@/lib/actions/sources";
+import { readChatEvents } from "@/lib/chat/client";
+import type { RetrievedChunk } from "@/lib/chat/types";
+import type { Bot } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface RetrievedChunk { n: number; source: string; score: number; text: string }
 interface Turn { role: "user" | "assistant"; content: string; streaming?: boolean }
 interface Inspect { chunks: RetrievedChunk[]; tokens: number; latencyMs: number; model: string; question: string; answer: string }
 
@@ -44,7 +47,19 @@ const FALLBACK_CHUNKS: RetrievedChunk[] = [
   { n: 1, source: "Product Catalog 2026.pdf", score: 0.41, text: "Our catalog covers over 400 products across five categories." },
 ];
 
-export function PlaygroundView() {
+export function PlaygroundView({ bots, demo }: { bots: Bot[]; demo: boolean }) {
+  if (bots.length === 0) {
+    return (
+      <>
+        <PageHeader title="Playground" description="Test your bot and inspect what it retrieved." />
+        <EmptyState icon={Sparkles} title="Create a bot first" description="The playground tests one of your chatbots." action={<Button asChild><Link href="/bots/new"><Plus /> Create bot</Link></Button>} />
+      </>
+    );
+  }
+  return <PlaygroundChat bots={bots} demo={demo} />;
+}
+
+function PlaygroundChat({ bots, demo }: { bots: Bot[]; demo: boolean }) {
   const [botId, setBotId] = React.useState(bots[0].id);
   const bot = bots.find((b) => b.id === botId)!;
   const [turns, setTurns] = React.useState<Turn[]>([]);
@@ -54,20 +69,57 @@ export function PlaygroundView() {
   const [qaOpen, setQaOpen] = React.useState(false);
   const endRef = React.useRef<HTMLDivElement>(null);
   const timers = React.useRef<ReturnType<typeof setTimeout>[]>([]);
+  const abort = React.useRef<AbortController | null>(null);
 
   React.useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns]);
-  React.useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  React.useEffect(() => () => { timers.current.forEach(clearTimeout); abort.current?.abort(); }, []);
 
   function reset() {
     timers.current.forEach(clearTimeout);
+    abort.current?.abort();
     setTurns([]); setInspect(null); setBusy(false);
   }
 
-  // Mock streaming. Phase 4 replaces this with the real /api/chat stream.
+  /** Real mode: stream from /api/playground/chat (retrieval + the bot's configured model). */
+  async function sendReal(q: string) {
+    const history = [...turns.map(({ role, content }) => ({ role, content })), { role: "user" as const, content: q }];
+    setTurns((t) => [...t, { role: "user", content: q }, { role: "assistant", content: "", streaming: true }]);
+    const controller = new AbortController();
+    abort.current = controller;
+    const patchLast = (fn: (t: Turn) => Turn) => setTurns((t) => t.map((turn, idx) => (idx === t.length - 1 ? fn(turn) : turn)));
+    let chunks: RetrievedChunk[] = [];
+    let answer = "";
+    try {
+      const res = await fetch("/api/playground/chat", {
+        method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({ botId, messages: history }),
+      });
+      for await (const ev of readChatEvents(res)) {
+        if (ev.t === "meta") chunks = ev.chunks;
+        else if (ev.t === "delta") { answer += ev.text; patchLast((turn) => ({ ...turn, content: answer })); }
+        else if (ev.t === "error") { patchLast((turn) => ({ ...turn, content: ev.message, streaming: false })); toast.error(ev.message); }
+        else if (ev.t === "done") {
+          patchLast((turn) => ({ ...turn, streaming: false }));
+          setInspect({ chunks, tokens: ev.tokens.input + ev.tokens.output, latencyMs: ev.latencyMs, model: ev.model, question: q, answer });
+        }
+      }
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        patchLast((turn) => ({ ...turn, content: "Couldn't reach the server.", streaming: false }));
+        toast.error(e instanceof Error ? e.message : "Request failed");
+      }
+    } finally {
+      patchLast((turn) => ({ ...turn, streaming: false }));
+      setBusy(false);
+    }
+  }
+
+  // Demo mode: canned answers with simulated streaming.
   function send(question: string) {
     const q = question.trim();
     if (!q || busy) return;
     setInput(""); setBusy(true);
+    if (!demo) return void sendReal(q);
     const hit = KB.find((k) => k.match.test(q));
     const passing = (hit?.chunks ?? FALLBACK_CHUNKS).filter((c) => c.score >= bot.similarityThreshold);
     const answer = hit && passing.length ? hit.answer : bot.fallbackMessage;
@@ -191,7 +243,11 @@ export function PlaygroundView() {
       <QaDialog
         open={qaOpen} onOpenChange={setQaOpen}
         initial={{ question: inspect?.question, answer: inspect?.answer.replace(/\s?\[\d+\]/g, "") }}
-        onSave={() => { toast.success("Saved as curated Q&A"); setQaOpen(false); }}
+        onSave={async (v) => {
+          const res = await createQaSource(v);
+          if (!res.ok) return void toast.error(res.error);
+          toast.success("Saved as curated Q&A"); setQaOpen(false);
+        }}
       />
     </>
   );
