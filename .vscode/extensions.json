@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "esbenp.prettier-vscode",
+    "GitHub.vscode-pull-request-github",
+    "Supabase.vscode-supabase-extension",
+    "ckolkman.vscode-postgres",
+    "usernamehw.errorlens",
+    "yoavbls.pretty-ts-errors",
+    "mikestead.dotenv"
+  ]
+}
