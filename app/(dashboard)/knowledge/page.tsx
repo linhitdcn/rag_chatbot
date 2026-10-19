@@ -4,6 +4,9 @@ import { listBots } from "@/lib/data/bots";
 import { getContext } from "@/lib/data/context";
 import { listSources } from "@/lib/data/sources";
 
+// Ingestion (extract, chunk, embed) runs after the action responds and shares this limit.
+export const maxDuration = 60;
+
 export const metadata: Metadata = { title: "Knowledge Base" };
 
 export default async function KnowledgePage() {

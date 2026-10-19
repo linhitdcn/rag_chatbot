@@ -3,6 +3,9 @@ import { GeneralForm } from "@/components/settings/general-form";
 import { PageHeader } from "@/components/layout/page-header";
 import { getContext } from "@/lib/data/context";
 
+// Ingestion (extract, chunk, embed) runs after the action responds and shares this limit.
+export const maxDuration = 60;
+
 export const metadata: Metadata = { title: "General settings" };
 
 export default async function GeneralSettingsPage() {
