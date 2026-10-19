@@ -118,3 +118,18 @@ export async function setUnansweredStatus(id: string, status: Exclude<Unanswered
   revalidatePath("/unanswered");
   return ok();
 }
+
+/** Permanently deletes unanswered-question records (there is no RLS delete policy, so check the workspace explicitly). */
+export async function deleteUnanswered(ids: string[]): Promise<ActionResult<{ deleted: number }>> {
+  const auth = await authorize("editor");
+  if ("error" in auth) return err(auth.error);
+  if (auth.ctx.demo) return ok({ deleted: ids.length });
+  const valid = [...new Set(ids.filter(isUuid))];
+  if (!valid.length) return err("Nothing to delete");
+  if (valid.length > 500) return err("Select at most 500 questions at a time.");
+  const { data, error } = await createAdminClient().from("unanswered_questions")
+    .delete().in("id", valid).eq("workspace_id", auth.ctx.workspace.id).select("id");
+  if (error) return err(error.message);
+  revalidatePath("/unanswered");
+  return ok({ deleted: data?.length ?? 0 });
+}
