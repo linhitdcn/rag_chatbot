@@ -11,9 +11,41 @@ import type { Chunk, Source } from "@/lib/types";
 import { ACCEPTED_EXTENSIONS, MAX_FILE_MB, qaSchema, urlSourceSchema, type QaValues, type UrlSourceValues } from "@/lib/validations/knowledge";
 import { authorize, err, message, ok, type ActionResult } from "./shared";
 
+/** Replaces the set of bots linked to a source (diff-synced). RLS on bot_sources enforces the workspace boundary. */
+async function syncBots(ctx: Parameters<typeof db>[0], sourceId: string, botIds: string[]): Promise<string | null> {
+  const supabase = db(ctx);
+  const want = new Set(botIds.filter(isUuid));
+  const { data: existing, error } = await supabase.from("bot_sources").select("bot_id").eq("source_id", sourceId);
+  if (error) return error.message;
+  const have = new Set((existing ?? []).map((r) => r.bot_id as string));
+  const removed = [...have].filter((b) => !want.has(b));
+  const added = [...want].filter((b) => !have.has(b));
+  if (removed.length) {
+    const { error: e } = await supabase.from("bot_sources").delete().eq("source_id", sourceId).in("bot_id", removed);
+    if (e) return e.message;
+  }
+  if (added.length) {
+    const { error: e } = await supabase.from("bot_sources").insert(added.map((bot_id) => ({ bot_id, source_id: sourceId })));
+    if (e) return e.message;
+  }
+  return null;
+}
+
+/** Changes which chatbots can use an existing source. */
+export async function setSourceBots(sourceId: string, botIds: string[]): Promise<ActionResult<{ botIds: string[] }>> {
+  const auth = await authorize("editor");
+  if ("error" in auth) return err(auth.error);
+  if (auth.ctx.demo) return ok({ botIds });
+  if (!isUuid(sourceId)) return err("Source not found");
+  const failure = await syncBots(auth.ctx, sourceId, botIds);
+  if (failure) return err(failure);
+  revalidatePath("/", "layout");
+  return ok({ botIds: botIds.filter(isUuid) });
+}
+
 // Sources are created `pending`, then ingested (extract → chunk → embed) right after the response is sent.
 
-export async function createQaSource(input: QaValues): Promise<ActionResult<Source>> {
+export async function createQaSource(input: QaValues, botIds: string[] = []): Promise<ActionResult<Source>> {
   const parsed = qaSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Invalid Q&A");
   const { question, answer } = parsed.data;
@@ -29,12 +61,14 @@ export async function createQaSource(input: QaValues): Promise<ActionResult<Sour
     .select(SOURCE_SELECT).returns<SourceRow[]>().single();
   if (error) return err(error.message);
   const row = data as unknown as SourceRow;
+  const linkError = await syncBots(ctx, row.id, botIds);
   after(() => ingestSource(row.id));
   revalidatePath("/knowledge");
-  return ok(toSource(row));
+  const created = toSource(row);
+  return ok(linkError ? created : { ...created, botIds: botIds.filter(isUuid) });
 }
 
-export async function createUrlSource(input: UrlSourceValues): Promise<ActionResult<Source>> {
+export async function createUrlSource(input: UrlSourceValues, botIds: string[] = []): Promise<ActionResult<Source>> {
   const parsed = urlSourceSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Invalid URL");
   const { url, maxPages } = parsed.data;
@@ -51,13 +85,15 @@ export async function createUrlSource(input: UrlSourceValues): Promise<ActionRes
     .select(SOURCE_SELECT).returns<SourceRow[]>().single();
   if (error) return err(error.message);
   const row = data as unknown as SourceRow;
+  const linkError = await syncBots(ctx, row.id, botIds);
   after(() => ingestSource(row.id));
   revalidatePath("/knowledge");
-  return ok(toSource(row));
+  const created = toSource(row);
+  return ok(linkError ? created : { ...created, botIds: botIds.filter(isUuid) });
 }
 
 /** Registers a file the browser already uploaded to Storage under "<workspace_id>/…" and starts ingestion. */
-export async function createFileSource(input: { path: string; name: string; sizeBytes: number }): Promise<ActionResult<Source>> {
+export async function createFileSource(input: { path: string; name: string; sizeBytes: number; botIds?: string[] }): Promise<ActionResult<Source>> {
   const auth = await authorize("editor");
   if ("error" in auth) return err(auth.error);
   const { ctx } = auth;
@@ -74,9 +110,11 @@ export async function createFileSource(input: { path: string; name: string; size
     .select(SOURCE_SELECT).returns<SourceRow[]>().single();
   if (error) return err(error.message);
   const row = data as unknown as SourceRow;
+  const linkError = await syncBots(ctx, row.id, input.botIds ?? []);
   after(() => ingestSource(row.id));
   revalidatePath("/knowledge");
-  return ok(toSource(row));
+  const created = toSource(row);
+  return ok(linkError ? created : { ...created, botIds: input.botIds ?? [].filter(isUuid) });
 }
 
 export async function deleteSources(ids: string[]): Promise<ActionResult> {

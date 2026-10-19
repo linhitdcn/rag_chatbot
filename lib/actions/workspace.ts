@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db, isUuid } from "@/lib/data/context";
+import { ingestSource } from "@/lib/ingest/run";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { inviteSchema, workspaceSchema, type InviteValues, type WorkspaceValues } from "@/lib/validations/settings";
 import type { Role, TeamMember, UnansweredQuestion } from "@/lib/types";
@@ -13,9 +15,19 @@ export async function updateWorkspace(input: WorkspaceValues): Promise<ActionRes
   const auth = await authorize("owner");
   if ("error" in auth) return err(auth.error);
   if (auth.ctx.demo) return ok();
+  const { name, timezone, embeddingProvider } = parsed.data;
   const { error } = await db(auth.ctx).from("workspaces")
-    .update({ name: parsed.data.name, timezone: parsed.data.timezone }).eq("id", auth.ctx.workspace.id);
+    .update({ name, timezone, embedding_provider: embeddingProvider }).eq("id", auth.ctx.workspace.id);
   if (error) return err(error.message);
+
+  // Vectors from different embedding models can't be compared, so switching means re-processing every source.
+  // Done one at a time to stay inside provider rate limits; failures show up per source and can be re-synced.
+  if (embeddingProvider !== auth.ctx.workspace.embeddingProvider) {
+    const { data: sources } = await db(auth.ctx).from("sources").update({ status: "pending", error: null })
+      .eq("workspace_id", auth.ctx.workspace.id).select("id").returns<{ id: string }[]>();
+    const ids = (sources ?? []).map((s) => s.id);
+    after(async () => { for (const id of ids) await ingestSource(id); });
+  }
   revalidatePath("/", "layout");
   return ok();
 }

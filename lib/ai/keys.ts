@@ -1,7 +1,9 @@
 import { decrypt } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type Provider = "openai" | "anthropic";
+import { PROVIDERS, type Provider } from "./providers";
+
+export type { Provider };
 
 /** AAD that ties a ciphertext to its (workspace, provider) row, so it can't be moved to another row. */
 export const keyContext = (workspaceId: string, provider: Provider) => `${workspaceId}:${provider}`;
@@ -20,6 +22,5 @@ export async function getProviderKey(workspaceId: string, provider: Provider): P
       throw new Error(`The saved ${provider} key can't be decrypted. Re-enter it in Settings → API Keys.`);
     }
   }
-  const env = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
-  return env?.trim() || null;
+  return process.env[PROVIDERS[provider].envKey]?.trim() || null;
 }

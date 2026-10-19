@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot as BotIcon, BookOpen, MessageSquare, Plus } from "lucide-react";
+import { AlertTriangle, Bot as BotIcon, BookOpen, MessageSquare, Plus } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { BotAvatar } from "@/components/shared/bot-avatar";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -37,6 +37,7 @@ export default async function BotsPage() {
                 </div>
                 <div className="mt-auto flex items-center gap-5 border-t pt-4 text-sm text-muted-foreground">
                   <span className="flex items-center gap-1.5"><BookOpen className="size-4" /> {b.sourceCount} sources</span>
+                  {b.lastError && <span className="flex items-center gap-1 text-warning" title={b.lastError.message}><AlertTriangle className="size-4" /> {b.lastError.kind === "rate_limit" ? "Rate limited" : "Error"}</span>}
                   <span className="flex items-center gap-1.5"><MessageSquare className="size-4" /> {b.conversations30d.toLocaleString()} <span className="text-xs">/ 30d</span></span>
                 </div>
               </Card>

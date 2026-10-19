@@ -19,3 +19,10 @@
 - Phase 4: `components/playground/playground-view.tsx` (mock streaming)
 - Phase 5: `app/embed/[botPublicId]/page.tsx`, `public/widget.js` (placeholders)
 - Phase 6: `components/settings/api-keys-view.tsx`
+
+## Addendum: free-tier providers
+
+Added after Phase 7 so the proof of concept can run at no cost: Google Gemini and Groq as chat providers, Gemini as the
+default embedding provider (per-chunk embedding model tag), friendly rate-limit handling, and a `last_error` flag so an
+admin can switch a bot to another model. Needs migration `20261017000500_free_tier_providers.sql`. Not yet run against
+live provider APIs.

@@ -27,5 +27,5 @@ export async function POST(request: Request) {
   const { data: bot } = await db(ctx).from("bots").select("*").eq("id", body.botId).maybeSingle<BotRow>();
   if (!bot) return json({ error: "Unknown bot" }, 404);
 
-  return ndjsonResponse(runChat({ bot: bot as unknown as EngineBot, history, persist: null, signal: request.signal }));
+  return ndjsonResponse(runChat({ bot: bot as unknown as EngineBot, history, audience: "admin", persist: null, signal: request.signal }));
 }

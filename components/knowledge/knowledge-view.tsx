@@ -5,12 +5,12 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  FileText, Globe, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, UploadCloud, MessageSquareQuote, Eye, X,
+  FileText, Globe, Link2, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, UploadCloud, MessageSquareQuote, Eye, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { DataTable, SortableHeader } from "@/components/shared/data-table";
+import { DataTable, SortableHeader, selectColumn } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SourceSheet } from "@/components/knowledge/source-sheet";
@@ -23,7 +23,8 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { createFileSource, createQaSource, createUrlSource, deleteSources, getSourceStatuses, resyncSource } from "@/lib/actions/sources";
+import { createFileSource, createQaSource, createUrlSource, deleteSources, getSourceStatuses, resyncSource, setSourceBots } from "@/lib/actions/sources";
+import { BotPicker } from "@/components/knowledge/bot-picker";
 import { createClient } from "@/lib/supabase/client";
 import { ACCEPTED_EXTENSIONS, MAX_FILE_MB, qaSchema, urlSourceSchema, type QaValues, type UrlSourceValues } from "@/lib/validations/knowledge";
 import type { Source, SourceType } from "@/lib/types";
@@ -40,6 +41,9 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
   const [detail, setDetail] = React.useState<Source | null>(null);
   const [toDelete, setToDelete] = React.useState<Source | null>(null);
   const [qaOpen, setQaOpen] = React.useState(false);
+  // New sources default to being used by every bot, so a fresh Q&A/file/site works in chat right away.
+  const [newBotIds, setNewBotIds] = React.useState<string[]>(() => bots.map((b) => b.id));
+  const [linking, setLinking] = React.useState<Source | null>(null);
   const [uploads, setUploads] = React.useState<Upload[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -106,7 +110,7 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
       const { error } = await createClient().storage.from("documents").upload(path, file, { contentType: file.type || undefined });
       if (error) return void toast.error(`${file.name}: ${error.message}`);
       setUploads((u) => u.map((x) => (x.id === id ? { ...x, progress: 80 } : x)));
-      await createRemote(() => createFileSource({ path, name: file.name, sizeBytes: file.size }), `${file.name} uploaded — processing started`);
+      await createRemote(() => createFileSource({ path, name: file.name, sizeBytes: file.size, botIds: newBotIds }), `${file.name} uploaded — processing started`);
     } finally {
       setUploads((u) => u.filter((x) => x.id !== id));
     }
@@ -134,6 +138,7 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
   }
 
   const columns = React.useMemo<ColumnDef<Source>[]>(() => [
+    selectColumn<Source>(),
     {
       accessorKey: "name",
       header: ({ column }) => <SortableHeader column={column}>Name</SortableHeader>,
@@ -164,6 +169,7 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onClick={() => setDetail(row.original)}><Eye /> View chunks</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setLinking(row.original)}><Link2 /> Link to chatbots…</DropdownMenuItem>
             <DropdownMenuItem onClick={() => void resync(row.original)}><RefreshCw /> Re-sync</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => setToDelete(row.original)}><Trash2 /> Delete</DropdownMenuItem>
@@ -203,10 +209,11 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
             className={cn("flex flex-col items-center rounded-xl border border-dashed px-6 py-10 text-center transition-colors", dragging ? "border-primary bg-primary/5" : "bg-muted/20")}
           >
             <UploadCloud className="mb-3 size-8 text-muted-foreground" aria-hidden />
-            <p className="text-sm font-medium">Drag & drop files here, or <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={() => inputRef.current?.click()}>browse</button></p>
+            <p className="text-sm font-medium"><span>Drag & drop files here, or</span>{" "}<button type="button" className="text-primary underline-offset-4 hover:underline" onClick={() => inputRef.current?.click()}>browse</button></p>
             <p className="mt-1 text-xs text-muted-foreground">PDF, DOCX, TXT, MD, CSV · up to {MAX_FILE_MB} MB each</p>
             <input ref={inputRef} type="file" multiple hidden accept={ACCEPTED_EXTENSIONS.join(",")} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
           </div>
+          <BotPicker bots={bots} value={newBotIds} onChange={setNewBotIds} idPrefix="file-bots" />
           {uploads.length > 0 && (
             <ul className="space-y-2">
               {uploads.map((u) => (
@@ -220,12 +227,14 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
           )}
         </TabsContent>
 
-        <TabsContent value="url"><WebsiteForm onAdd={async (v) => createRemote(() => createUrlSource(v), demo ? "Crawl started" : "Website added — crawling started")} /></TabsContent>
+        <TabsContent value="url" className="space-y-4"><WebsiteForm onAdd={async (v) => createRemote(() => createUrlSource(v, newBotIds), demo ? "Crawl started" : "Website added — crawling started")} />
+          <BotPicker bots={bots} value={newBotIds} onChange={setNewBotIds} idPrefix="url-bots" /></TabsContent>
         <TabsContent value="qa" className="hidden" />
       </Tabs>
 
       <DataTable
         key={tab}
+        getRowId={(s) => s.id}
         columns={columns}
         data={filtered}
         searchColumn="name"
@@ -239,7 +248,11 @@ export function KnowledgeView({ initialSources, bots, demo, workspaceId }: { ini
         )}
       />
 
-      <QaDialog open={qaOpen} onOpenChange={setQaOpen} onSave={async (v) => { if (await createRemote(() => createQaSource(v), "Q&A saved")) setQaOpen(false); }} />
+      <QaDialog open={qaOpen} onOpenChange={setQaOpen} bots={bots} botIds={newBotIds} onBotIdsChange={setNewBotIds} onSave={async (v) => { if (await createRemote(() => createQaSource(v, newBotIds), "Q&A saved")) setQaOpen(false); }} />
+      <LinkBotsDialog
+        source={linking} bots={bots} onClose={() => setLinking(null)}
+        onSaved={(id, botIds) => setItems((p) => p.map((s) => (s.id === id ? { ...s, botIds } : s)))}
+      />
       <SourceSheet source={detail} botNames={bots} onOpenChange={(o) => !o && setDetail(null)} />
       <ConfirmDialog
         open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}
@@ -277,8 +290,10 @@ function WebsiteForm({ onAdd }: { onAdd: (v: UrlSourceValues) => Promise<boolean
   );
 }
 
-export function QaDialog({ open, onOpenChange, onSave, initial }: {
+export function QaDialog({ open, onOpenChange, onSave, initial, bots, botIds, onBotIdsChange }: {
   open: boolean; onOpenChange: (o: boolean) => void; onSave: (v: QaValues) => void | Promise<void>; initial?: Partial<QaValues>;
+  /** When given, the dialog lets the user choose which chatbots will use this answer. */
+  bots?: { id: string; name: string }[]; botIds?: string[]; onBotIdsChange?: (ids: string[]) => void;
 }) {
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<QaValues>({
     resolver: zodResolver(qaSchema) as never, defaultValues: { question: initial?.question ?? "", answer: initial?.answer ?? "" },
@@ -302,6 +317,7 @@ export function QaDialog({ open, onOpenChange, onSave, initial }: {
             <Textarea id="qa-answer" rows={5} aria-invalid={!!errors.answer} {...register("answer")} />
             {errors.answer && <p role="alert" className="text-xs text-destructive">{errors.answer.message}</p>}
           </div>
+          {bots && botIds && onBotIdsChange && <BotPicker bots={bots} value={botIds} onChange={onBotIdsChange} idPrefix="qa-bots" />}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}><X /> Cancel</Button>
             <Button type="submit" disabled={isSubmitting}>{isSubmitting && <Loader2 className="animate-spin" />} Save answer</Button>
@@ -309,5 +325,47 @@ export function QaDialog({ open, onOpenChange, onSave, initial }: {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function LinkBotsDialog({ source, bots, onClose, onSaved }: {
+  source: Source | null; bots: { id: string; name: string }[]; onClose: () => void; onSaved: (id: string, botIds: string[]) => void;
+}) {
+  return (
+    <Dialog open={!!source} onOpenChange={(o) => !o && onClose()}>
+      {/* Keyed by source so the checkbox state starts from that source's current links. */}
+      {source && <LinkBotsForm key={source.id} source={source} bots={bots} onClose={onClose} onSaved={onSaved} />}
+    </Dialog>
+  );
+}
+
+function LinkBotsForm({ source, bots, onClose, onSaved }: {
+  source: Source; bots: { id: string; name: string }[]; onClose: () => void; onSaved: (id: string, botIds: string[]) => void;
+}) {
+  const [ids, setIds] = React.useState<string[]>(source.botIds);
+  const [saving, setSaving] = React.useState(false);
+
+  async function save() {
+    setSaving(true);
+    const res = await setSourceBots(source.id, ids);
+    setSaving(false);
+    if (!res.ok) return void toast.error(res.error);
+    onSaved(source.id, res.data.botIds);
+    toast.success("Chatbots updated");
+    onClose();
+  }
+
+  return (
+    <DialogContent className="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>Link to chatbots</DialogTitle>
+        <DialogDescription className="truncate">Choose which chatbots can answer from “{source.name}”.</DialogDescription>
+      </DialogHeader>
+      <BotPicker bots={bots} value={ids} onChange={setIds} idPrefix="link-bots" />
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button type="button" disabled={saving} onClick={() => void save()}>{saving && <Loader2 className="animate-spin" />} Save</Button>
+      </DialogFooter>
+    </DialogContent>
   );
 }

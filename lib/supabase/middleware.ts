@@ -5,7 +5,7 @@ export const isSupabaseConfigured = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
 
-const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/embed", "/api/chat", "/widget.js", "/auth"];
+const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/embed", "/api/chat", "/api/widget", "/widget.js", "/auth"];
 
 /** Refreshes the Supabase session cookie and guards dashboard routes. */
 export async function updateSession(request: NextRequest) {

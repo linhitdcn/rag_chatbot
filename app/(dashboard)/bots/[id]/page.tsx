@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FlaskConical } from "lucide-react";
 import { BotEditor } from "@/components/bots/bot-editor";
+import { BotErrorBanner } from "@/components/bots/bot-error-banner";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ export default async function BotPage({ params }: { params: Promise<{ id: string
           </>
         }
       />
+      {bot.lastError && <BotErrorBanner error={bot.lastError} />}
       <BotEditor bot={bot} sources={sources} />
     </>
   );

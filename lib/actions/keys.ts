@@ -2,22 +2,26 @@
 
 import { revalidatePath } from "next/cache";
 import { keyContext, type Provider } from "@/lib/ai/keys";
+import { isProvider } from "@/lib/ai/providers";
 import { encrypt } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { apiKeySchema } from "@/lib/validations/settings";
 import { authorize, err, ok, type ActionResult } from "./shared";
 
-const PROVIDERS = ["openai", "anthropic"] as const;
-
 /** Cheapest authenticated call per provider: list models. Resolves to an error message, or null when the key works. */
 async function verifyKey(provider: Provider, key: string): Promise<string | null> {
-  const req = provider === "openai"
-    ? fetch("https://api.openai.com/v1/models?limit=1", { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) })
-    : fetch("https://api.anthropic.com/v1/models?limit=1", { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(10_000) });
+  const signal = AbortSignal.timeout(10_000);
+  const req = {
+    openai: () => fetch("https://api.openai.com/v1/models?limit=1", { headers: { authorization: `Bearer ${key}` }, signal }),
+    anthropic: () => fetch("https://api.anthropic.com/v1/models?limit=1", { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }, signal }),
+    google: () => fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key }, signal }),
+    groq: () => fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: `Bearer ${key}` }, signal }),
+  }[provider];
   try {
-    const res = await req;
+    const res = await req();
     if (res.ok) return null;
-    if (res.status === 401 || res.status === 403) return "The provider rejected this key. Check that it's correct and active.";
+    if (res.status === 401 || res.status === 403 || res.status === 400) return "The provider rejected this key. Check that it's correct and active.";
+    if (res.status === 429) return "The key is valid but currently rate limited. Try again in a minute.";
     return `The provider returned an error (${res.status}). Try again in a moment.`;
   } catch {
     return "Couldn't reach the provider to verify the key. Try again in a moment.";
@@ -25,7 +29,7 @@ async function verifyKey(provider: Provider, key: string): Promise<string | null
 }
 
 export async function saveProviderKey(provider: Provider, key: string): Promise<ActionResult<{ last4: string }>> {
-  if (!PROVIDERS.includes(provider)) return err("Unknown provider");
+  if (!isProvider(provider)) return err("Unknown provider");
   const trimmed = key.trim();
   const parsed = apiKeySchema.safeParse({ key: trimmed });
   if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Invalid key");
@@ -54,7 +58,7 @@ export async function saveProviderKey(provider: Provider, key: string): Promise<
 }
 
 export async function removeProviderKey(provider: Provider): Promise<ActionResult> {
-  if (!PROVIDERS.includes(provider)) return err("Unknown provider");
+  if (!isProvider(provider)) return err("Unknown provider");
   const auth = await authorize("owner");
   if ("error" in auth) return err(auth.error);
   if (auth.ctx.demo) return ok();
@@ -66,7 +70,7 @@ export async function removeProviderKey(provider: Provider): Promise<ActionResul
 
 /** Re-verifies the stored key against the provider (without ever sending it to the browser). */
 export async function testProviderKey(provider: Provider): Promise<ActionResult> {
-  if (!PROVIDERS.includes(provider)) return err("Unknown provider");
+  if (!isProvider(provider)) return err("Unknown provider");
   const auth = await authorize("editor");
   if ("error" in auth) return err(auth.error);
   if (auth.ctx.demo) return ok();

@@ -31,20 +31,21 @@ const rawBots: Omit<Bot, "widget">[] = [
     starterQuestions: ["How do I track my order?", "What is your return policy?", "Do you ship internationally?"],
     temperature: 0.3, maxTokens: 800, topK: 5, similarityThreshold: 0.72,
     sourceIds: ["src_1", "src_2", "src_3", "src_5"],
-    features: { citations: true, leadCapture: true, leadFields: ["name", "email"], leadTiming: "after_3", handoffEmail: "support@acme.com", feedback: true },
+    features: { citations: true, leadCapture: true, leadFields: ["name", "email"], leadTiming: "after_3", handoffEmail: "support@acme.com", feedback: true, liveChat: true, liveChatLabel: "Talk to a person", liveChatWaitingMessage: "We've let the team know. A person will reply here shortly — you can keep typing.", liveChatOffer: "always" },
   },
   {
     id: "bot_2", publicId: "bt_Zp91xL", name: "Sales Concierge",
     description: "Qualifies leads and answers pricing and product questions.",
     status: "active", avatarColor: "#8b5cf6", sourceCount: 3, conversations30d: 391,
     provider: "anthropic", model: "claude-sonnet-5-5", tone: "professional",
+    lastError: { kind: "rate_limit", provider: "anthropic", model: "claude-sonnet-5-5", message: "Anthropic rate limit reached for claude-sonnet-5-5. Wait a moment, or switch this bot to another model or provider in its Model settings.", at: "2026-10-16T09:12:00Z" },
     systemPrompt: "You are a professional sales concierge for Acme. Explain plans and pricing clearly, and invite visitors to book a demo.",
     welcomeMessage: "Welcome to Acme! Ask me anything about our plans.",
     fallbackMessage: "I'm not sure about that one — let me get someone from sales to follow up.",
     starterQuestions: ["What plans do you offer?", "Is there a free trial?", "Can I get a demo?"],
     temperature: 0.4, maxTokens: 1000, topK: 6, similarityThreshold: 0.7,
     sourceIds: ["src_2", "src_4", "src_6"],
-    features: { citations: true, leadCapture: true, leadFields: ["name", "email", "phone"], leadTiming: "start", handoffEmail: "sales@acme.com", feedback: true },
+    features: { citations: true, leadCapture: true, leadFields: ["name", "email", "phone"], leadTiming: "start", handoffEmail: "sales@acme.com", feedback: true, liveChat: true, liveChatLabel: "Talk to a person", liveChatWaitingMessage: "We've let the team know. A person will reply here shortly — you can keep typing.", liveChatOffer: "always" },
   },
   {
     id: "bot_3", publicId: "bt_Qw33Rt", name: "HR Helpdesk",
@@ -57,7 +58,7 @@ const rawBots: Omit<Bot, "widget">[] = [
     starterQuestions: ["How many vacation days do I get?", "How do I submit expenses?"],
     temperature: 0.2, maxTokens: 600, topK: 4, similarityThreshold: 0.75,
     sourceIds: ["src_7"],
-    features: { citations: true, leadCapture: false, leadFields: ["email"], leadTiming: "start", handoffEmail: "hr@acme.com", feedback: false },
+    features: { citations: true, leadCapture: false, leadFields: ["email"], leadTiming: "start", handoffEmail: "hr@acme.com", feedback: false, liveChat: false, liveChatLabel: "Talk to a person", liveChatWaitingMessage: "We've let the team know. A person will reply here shortly — you can keep typing.", liveChatOffer: "always" },
   },
 ];
 
@@ -112,6 +113,7 @@ export const conversations: Conversation[] = (() => {
       hasLead: i % 4 === 0,
       unanswered: r() < 0.14,
       startedAt: ago(20 + i * 190 + Math.floor(r() * 90)),
+      mode: i === 1 ? "waiting" : "bot",
     } satisfies Conversation;
   });
 })();

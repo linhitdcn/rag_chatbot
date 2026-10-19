@@ -28,7 +28,12 @@ export interface BotRow {
   lead_fields: Bot["features"]["leadFields"];
   lead_timing: Bot["features"]["leadTiming"];
   handoff_email: string;
+  live_chat: boolean;
+  live_chat_label: string;
+  live_chat_waiting_message: string;
+  live_chat_offer: Bot["features"]["liveChatOffer"];
   widget: unknown;
+  last_error: Bot["lastError"];
   bot_sources: { source_id: string }[];
 }
 
@@ -42,10 +47,12 @@ function toBot(r: BotRow, conversations30d: number): Bot {
     welcomeMessage: r.welcome_message, fallbackMessage: r.fallback_message, starterQuestions: r.starter_questions,
     temperature: r.temperature, maxTokens: r.max_tokens, topK: r.top_k, similarityThreshold: r.similarity_threshold,
     sourceIds: r.bot_sources.map((s) => s.source_id),
+    lastError: r.last_error ?? null,
     widget: resolveWidget(r.widget, { name: r.name, welcomeMessage: r.welcome_message }),
     features: {
       citations: r.citations, leadCapture: r.lead_capture, leadFields: r.lead_fields,
       leadTiming: r.lead_timing, handoffEmail: r.handoff_email, feedback: r.feedback,
+      liveChat: r.live_chat, liveChatLabel: r.live_chat_label, liveChatWaitingMessage: r.live_chat_waiting_message, liveChatOffer: r.live_chat_offer,
     },
   };
 }

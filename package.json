@@ -8,10 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:bundle": "cat supabase/migrations/*.sql > supabase/setup.all.sql"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.81",
+    "@ai-sdk/google": "^4.0.98",
+    "@ai-sdk/groq": "^4.0.62",
     "@ai-sdk/openai": "^4.0.95",
     "@hookform/resolvers": "^5.9.1",
     "@supabase/ssr": "^0.12.7",
@@ -46,6 +49,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.1",
+    "supabase": "^2.121.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.0.5"

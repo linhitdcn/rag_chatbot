@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeHistory } from "@/lib/chat/engine";
+import { normalizeQuestion, sanitizeHistory } from "@/lib/chat/engine";
 import { rateLimit } from "@/lib/chat/rate-limit";
 import { MAX_HISTORY, MAX_MESSAGE_CHARS } from "@/lib/chat/types";
 
@@ -30,5 +30,16 @@ describe("rateLimit", () => {
     expect([1, 2, 3].map(() => rateLimit(key, 3, 60_000))).toEqual([true, true, true]);
     expect(rateLimit(key, 3, 60_000)).toBe(false);
     expect(rateLimit(`${key}-other`, 3, 60_000)).toBe(true);
+  });
+});
+
+describe("normalizeQuestion", () => {
+  it("ignores case, accents, punctuation and extra spaces", () => {
+    expect(normalizeQuestion("  Hello!! ")).toBe("hello");
+    expect(normalizeQuestion("Xin  chào, bạn?")).toBe("xin chao ban");
+    expect(normalizeQuestion("Đây là gì")).toBe("day la gi");
+  });
+  it("returns an empty string for punctuation-only input", () => {
+    expect(normalizeQuestion("?!")).toBe("");
   });
 });

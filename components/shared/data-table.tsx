@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -23,6 +24,8 @@ interface DataTableProps<TData, TValue> {
   pageSize?: number;
   onRowClick?: (row: TData) => void;
   bulkActions?: (selected: TData[], clear: () => void) => React.ReactNode;
+  /** Stable row ids keep the selection correct when sorting or filtering reorders rows. */
+  getRowId?: (row: TData) => string;
 }
 
 export function SortableHeader({ column, children }: { column: { getIsSorted: () => false | "asc" | "desc"; toggleSorting: (desc?: boolean) => void }; children: React.ReactNode }) {
@@ -39,15 +42,51 @@ export function SortableHeader({ column, children }: { column: { getIsSorted: ()
   );
 }
 
+/**
+ * Leading checkbox column. The header box selects every row that matches the current search/filters across ALL pages,
+ * not just the visible one. Clicks don't trigger the row's onRowClick.
+ */
+export function selectColumn<TData>(): ColumnDef<TData> {
+  return {
+    id: "select",
+    enableSorting: false,
+    header: ({ table }) => {
+      const rows = table.getPrePaginationRowModel().rows; // filtered + sorted, every page
+      const selected = rows.filter((r) => r.getIsSelected()).length;
+      const all = rows.length > 0 && selected === rows.length;
+      return (
+        <Checkbox
+          aria-label={`Select all ${rows.length} rows`}
+          checked={all || (selected > 0 && "indeterminate")}
+          disabled={rows.length === 0}
+          onCheckedChange={() => {
+            const next = !all;
+            table.setRowSelection((old) => {
+              const sel = { ...old };
+              for (const r of rows) { if (next) sel[r.id] = true; else delete sel[r.id]; }
+              return sel;
+            });
+          }}
+        />
+      );
+    },
+    cell: ({ row }) => (
+      <div onClick={(e) => e.stopPropagation()}>
+        <Checkbox aria-label="Select row" checked={row.getIsSelected()} onCheckedChange={(v) => row.toggleSelected(!!v)} />
+      </div>
+    ),
+  };
+}
+
 export function DataTable<TData, TValue>({
-  columns, data, searchColumn, searchPlaceholder = "Search…", toolbar, emptyState, loading, pageSize = 10, onRowClick, bulkActions,
+  columns, data, searchColumn, searchPlaceholder = "Search…", toolbar, emptyState, loading, pageSize = 10, onRowClick, bulkActions, getRowId,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   const table = useReactTable({
-    data, columns,
+    data, columns, getRowId,
     state: { sorting, columnFilters, rowSelection },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,

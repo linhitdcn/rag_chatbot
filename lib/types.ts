@@ -4,6 +4,7 @@ export type SourceStatus = "pending" | "processing" | "ready" | "failed";
 export type Rating = "up" | "down" | null;
 export type Role = "owner" | "editor" | "viewer";
 
+import type { EmbeddingProvider, Provider } from "@/lib/ai/providers";
 import type { WidgetSettings } from "@/lib/validations/widget";
 
 export interface Bot {
@@ -15,7 +16,7 @@ export interface Bot {
   avatarColor: string;
   sourceCount: number;
   conversations30d: number;
-  provider: "openai" | "anthropic";
+  provider: Provider;
   model: string;
   tone: "friendly" | "professional" | "concise";
   systemPrompt: string;
@@ -28,6 +29,8 @@ export interface Bot {
   similarityThreshold: number;
   sourceIds: string[];
   widget: WidgetSettings;
+  /** Set when the last answer failed (e.g. rate limit); cleared on the next success. */
+  lastError?: BotError | null;
   features: {
     citations: boolean;
     leadCapture: boolean;
@@ -35,7 +38,19 @@ export interface Bot {
     leadTiming: "start" | "after_3" | "on_unanswered";
     handoffEmail: string;
     feedback: boolean;
+    liveChat: boolean;
+    liveChatLabel: string;
+    liveChatWaitingMessage: string;
+    liveChatOffer: "always" | "on_unanswered";
   };
+}
+
+export interface BotError {
+  kind: "rate_limit" | "auth" | "provider" | "error";
+  provider: Provider;
+  model: string;
+  message: string;
+  at: string;
 }
 
 export interface Source {
@@ -69,9 +84,12 @@ export interface Citation {
   snippet: string;
 }
 
+export type ConversationMode = "bot" | "waiting" | "human";
+
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "agent";
+  agentName?: string;
   content: string;
   createdAt: string;
   citations?: Citation[];
@@ -92,6 +110,7 @@ export interface Conversation {
   hasLead: boolean;
   unanswered: boolean;
   startedAt: string;
+  mode: ConversationMode;
 }
 
 export interface Lead {
@@ -128,6 +147,7 @@ export interface Workspace {
   plan: string;
   timezone: string;
   monthlySpendLimit: number;
+  embeddingProvider: EmbeddingProvider;
 }
 
 export interface CurrentUser {

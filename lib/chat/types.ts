@@ -15,6 +15,7 @@ export type ChatEvent =
   | { t: "meta"; conversationId: string | null; chunks: RetrievedChunk[] }
   | { t: "delta"; text: string }
   | { t: "done"; conversationId: string | null; messageId: string | null; unanswered: boolean; model: string; latencyMs: number; tokens: { input: number; output: number } }
+  | { t: "human"; conversationId: string; mode: "waiting" | "human" }
   | { t: "error"; message: string };
 
 export const MAX_MESSAGE_CHARS = 2000;

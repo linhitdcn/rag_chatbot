@@ -24,6 +24,7 @@ export async function saveBot(id: string | null, input: BotFormValues): Promise<
     provider: v.provider, model: v.model, temperature: v.temperature, max_tokens: v.maxTokens, top_k: v.topK,
     similarity_threshold: v.similarityThreshold, citations: v.citations, feedback: v.feedback,
     lead_capture: v.leadCapture, lead_fields: v.leadFields, lead_timing: v.leadTiming, handoff_email: v.handoffEmail,
+    live_chat: v.liveChat, live_chat_label: v.liveChatLabel, live_chat_waiting_message: v.liveChatWaitingMessage, live_chat_offer: v.liveChatOffer,
   };
 
   try {

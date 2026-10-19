@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { BotAvatar } from "@/components/shared/bot-avatar";
 import { saveBot } from "@/lib/actions/bots";
+import { PROVIDER_IDS, PROVIDERS } from "@/lib/ai/providers";
 import { MODELS, botSchema, type BotFormValues } from "@/lib/validations/bot";
 import type { Bot, Source } from "@/lib/types";
 
@@ -29,13 +30,16 @@ function toValues(bot?: Bot): BotFormValues {
     welcomeMessage: bot?.welcomeMessage ?? "Hi! How can I help you today?",
     starterQuestions: (bot?.starterQuestions ?? []).map((value) => ({ value })),
     fallbackMessage: bot?.fallbackMessage ?? "Sorry, I couldn't find that. Would you like to talk to a human?",
-    provider: bot?.provider ?? "openai", model: bot?.model ?? "gpt-4o-mini",
+    provider: bot?.provider ?? "google", model: bot?.model ?? "gemini-2.5-flash",
     temperature: bot?.temperature ?? 0.3, maxTokens: bot?.maxTokens ?? 800, topK: bot?.topK ?? 5,
     similarityThreshold: bot?.similarityThreshold ?? 0.72,
     sourceIds: bot?.sourceIds ?? [],
     citations: bot?.features.citations ?? true, leadCapture: bot?.features.leadCapture ?? false,
     leadFields: bot?.features.leadFields ?? ["email"], leadTiming: bot?.features.leadTiming ?? "after_3",
     handoffEmail: bot?.features.handoffEmail ?? "", feedback: bot?.features.feedback ?? true,
+    liveChat: bot?.features.liveChat ?? true, liveChatLabel: bot?.features.liveChatLabel ?? "Talk to a person",
+    liveChatWaitingMessage: bot?.features.liveChatWaitingMessage ?? "We've let the team know. A person will reply here shortly — you can keep typing.",
+    liveChatOffer: bot?.features.liveChatOffer ?? "always",
   };
 }
 
@@ -68,6 +72,7 @@ export function BotEditor({ bot, sources }: { bot?: Bot; sources: Source[] }) {
   const provider = watch("provider");
   const prompt = watch("systemPrompt");
   const leadCapture = watch("leadCapture");
+  const liveChat = watch("liveChat");
   const name = watch("name");
   const unsaved = isNew ? name.length > 0 : isDirty;
 
@@ -195,11 +200,12 @@ export function BotEditor({ bot, sources }: { bot?: Bot; sources: Source[] }) {
                 <div className="space-y-1.5">
                   <Label htmlFor="provider">Provider</Label>
                   <Controller control={control} name="provider" render={({ field }) => (
-                    <Select value={field.value} onValueChange={(v) => { field.onChange(v); setValue("model", MODELS[v as keyof typeof MODELS][0], { shouldDirty: true }); }}>
+                    <Select value={field.value} onValueChange={(v) => { field.onChange(v); setValue("model", MODELS[v as (typeof PROVIDER_IDS)[number]][0], { shouldDirty: true }); }}>
                       <SelectTrigger id="provider" className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="anthropic">Anthropic</SelectItem>
+                        {PROVIDER_IDS.map((p) => (
+                          <SelectItem key={p} value={p}>{PROVIDERS[p].name}{PROVIDERS[p].free ? " · free tier" : ""}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   )} />
@@ -296,10 +302,39 @@ export function BotEditor({ bot, sources }: { bot?: Bot; sources: Source[] }) {
                   </div>
                 )}
               </div>
+              <div>
+                <SwitchRow control={control} name="liveChat" label="Live chat with your team" description="Let visitors ask for a person, and let your team take over a chat from the bot (Conversations → open a chat)." />
+                {liveChat && (
+                  <div className="mb-4 grid gap-4 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="liveChatLabel">Button label</Label>
+                      <Input id="liveChatLabel" maxLength={40} aria-invalid={!!errors.liveChatLabel} {...register("liveChatLabel")} />
+                      <FieldError message={errors.liveChatLabel?.message} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="liveChatOffer">Show the button</Label>
+                      <Controller control={control} name="liveChatOffer" render={({ field }) => (
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <SelectTrigger id="liveChatOffer" className="w-full"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="always">After the first reply</SelectItem>
+                            <SelectItem value="on_unanswered">Only when the bot can&apos;t answer</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )} />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="liveChatWaitingMessage">Message while the visitor waits</Label>
+                      <Textarea id="liveChatWaitingMessage" rows={2} maxLength={200} aria-invalid={!!errors.liveChatWaitingMessage} {...register("liveChatWaitingMessage")} />
+                      <FieldError message={errors.liveChatWaitingMessage?.message} />
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="space-y-1.5 py-4">
                 <Label htmlFor="handoffEmail">Human handoff email</Label>
                 <Input id="handoffEmail" type="email" placeholder="support@company.com" className="max-w-sm" aria-invalid={!!errors.handoffEmail} {...register("handoffEmail")} />
-                <p className="text-xs text-muted-foreground">Conversations that need a person are forwarded here.</p>
+                <p className="text-xs text-muted-foreground">Contact address for your team. Email notifications aren&apos;t sent yet — check Conversations for chats that need a person.</p>
                 <FieldError message={errors.handoffEmail?.message} />
               </div>
             </CardContent>

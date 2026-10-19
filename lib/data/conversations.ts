@@ -1,5 +1,5 @@
 import { conversations as mockConversations, leads as mockLeads, transcriptFor } from "@/lib/mock/data";
-import type { Citation, Conversation, Lead, Message, Rating } from "@/lib/types";
+import type { Citation, Conversation, ConversationMode, Lead, Message, Rating } from "@/lib/types";
 import { db, fail, getContext, isUuid } from "./context";
 
 interface ConversationRow {
@@ -11,6 +11,7 @@ interface ConversationRow {
   rating: Rating;
   unanswered: boolean;
   started_at: string;
+  mode: ConversationMode;
 }
 interface LeadRow {
   id: string;
@@ -23,7 +24,7 @@ interface LeadRow {
 }
 interface MessageRow {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "agent";
   content: string;
   citations: Citation[] | null;
   tokens: number | null;
@@ -31,10 +32,11 @@ interface MessageRow {
   model: string | null;
   unanswered: boolean;
   feedback: Rating;
+  agent_name: string | null;
   created_at: string;
 }
 
-const CONV_COLS = "id, bot_id, visitor, preview, message_count, rating, unanswered, started_at";
+const CONV_COLS = "id, bot_id, visitor, preview, message_count, rating, unanswered, started_at, mode";
 const LEAD_COLS = "id, name, email, phone, bot_id, conversation_id, captured_at";
 
 const toLead = (r: LeadRow): Lead => ({
@@ -45,9 +47,20 @@ const toLead = (r: LeadRow): Lead => ({
 function toConversation(r: ConversationRow, withLead: Set<string>): Conversation {
   return {
     id: r.id, botId: r.bot_id, visitor: r.visitor, preview: r.preview, messageCount: r.message_count,
-    rating: r.rating, unanswered: r.unanswered, startedAt: r.started_at, hasLead: withLead.has(r.id),
+    rating: r.rating, unanswered: r.unanswered, startedAt: r.started_at, hasLead: withLead.has(r.id), mode: r.mode,
   };
 }
+
+export function toMessage(m: MessageRow): Message {
+  return {
+    id: m.id, role: m.role, content: m.content, createdAt: m.created_at, agentName: m.agent_name ?? undefined,
+    citations: m.citations ?? undefined, tokens: m.tokens ?? undefined, latencyMs: m.latency_ms ?? undefined,
+    model: m.model ?? undefined, unanswered: m.unanswered || undefined, feedback: m.feedback,
+  };
+}
+
+export const MESSAGE_COLS = "id, role, content, citations, tokens, latency_ms, model, unanswered, feedback, agent_name, created_at";
+export type { MessageRow };
 
 /** Newest first. `days` bounds the window; `limit` caps the rows the table has to hold. */
 export async function listConversations({ days = 90, limit = 500 }: { days?: number; limit?: number } = {}): Promise<Conversation[]> {
@@ -77,7 +90,7 @@ export async function getConversation(id: string): Promise<{ conversation: Conve
   const [conv, msgs, lead] = await Promise.all([
     supabase.from("conversations").select(CONV_COLS).eq("id", id).returns<ConversationRow[]>().maybeSingle(),
     supabase.from("messages")
-      .select("id, role, content, citations, tokens, latency_ms, model, unanswered, feedback, created_at")
+      .select("id, role, content, citations, tokens, latency_ms, model, unanswered, feedback, agent_name, created_at")
       .eq("conversation_id", id).order("created_at").returns<MessageRow[]>(),
     supabase.from("leads").select(LEAD_COLS).eq("conversation_id", id).limit(1).returns<LeadRow[]>().maybeSingle(),
   ]);
@@ -87,11 +100,7 @@ export async function getConversation(id: string): Promise<{ conversation: Conve
   if (!conv.data) return null;
   return {
     conversation: toConversation(conv.data, new Set(lead.data ? [id] : [])),
-    messages: (msgs.data ?? []).map((m) => ({
-      id: m.id, role: m.role, content: m.content, createdAt: m.created_at,
-      citations: m.citations ?? undefined, tokens: m.tokens ?? undefined, latencyMs: m.latency_ms ?? undefined,
-      model: m.model ?? undefined, unanswered: m.unanswered || undefined, feedback: m.feedback,
-    })),
+    messages: (msgs.data ?? []).map(toMessage),
     lead: lead.data ? toLead(lead.data) : null,
   };
 }

@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { currentUser as mockUser, workspace as mockWorkspace } from "@/lib/mock/data";
 import { isSupabaseConfigured } from "@/lib/supabase/middleware";
 import { createClient } from "@/lib/supabase/server";
+import { provisionWorkspace } from "./provision";
+import type { EmbeddingProvider } from "@/lib/ai/providers";
 import type { CurrentUser, Role, Workspace } from "@/lib/types";
 
 export interface Ctx {
@@ -17,7 +19,7 @@ export interface Ctx {
 
 interface MemberRow {
   role: Role;
-  workspaces: { id: string; name: string; plan: string; timezone: string; monthly_spend_limit: number } | null;
+  workspaces: { id: string; name: string; plan: string; timezone: string; monthly_spend_limit: number; embedding_provider: EmbeddingProvider } | null;
 }
 
 /** Resolves the signed-in user and their workspace once per request. */
@@ -26,7 +28,7 @@ export const getContext = cache(async (): Promise<Ctx> => {
     return {
       demo: true, supabase: null, role: "owner",
       user: { id: "u1", name: mockUser.name, email: mockUser.email, role: "owner" },
-      workspace: { ...mockWorkspace, monthlySpendLimit: 50 },
+      workspace: { ...mockWorkspace, monthlySpendLimit: 50, embeddingProvider: "google" },
     };
   }
 
@@ -34,11 +36,11 @@ export const getContext = cache(async (): Promise<Ctx> => {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) redirect("/login");
 
-  const [{ data: profile }, { data: membership }] = await Promise.all([
+  const load = () => Promise.all([
     supabase.from("profiles").select("full_name, email").eq("id", auth.user.id).maybeSingle(),
     supabase
       .from("workspace_members")
-      .select("role, workspaces(id, name, plan, timezone, monthly_spend_limit)")
+      .select("role, workspaces(id, name, plan, timezone, monthly_spend_limit, embedding_provider)")
       .eq("user_id", auth.user.id)
       .order("created_at")
       .limit(1)
@@ -46,8 +48,29 @@ export const getContext = cache(async (): Promise<Ctx> => {
       .maybeSingle(),
   ]);
 
+  const first = await load();
+  if (first[1].error) {
+    // Usually: the SQL migrations haven't been applied to this Supabase project yet.
+    throw new Error(`Couldn't load your workspace (${first[1].error.message}). Have you applied every file in supabase/migrations?`);
+  }
+  let [{ data: profile }, { data: membership }] = first;
+
+  if (!membership) {
+    // First sign-in, or an account created before the signup trigger existed.
+    await provisionWorkspace({ id: auth.user.id, email: auth.user.email, fullName: auth.user.user_metadata?.full_name });
+    let second = await load();
+    if (!second[1].data?.workspaces && !second[1].error) {
+      await new Promise((r) => setTimeout(r, 400)); // let the new rows become visible, then try once more
+      second = await load();
+    }
+    if (second[1].error) throw new Error(`Couldn't load your new workspace (${second[1].error.message}).`);
+    [{ data: profile }, { data: membership }] = second;
+  }
+
   const ws = membership?.workspaces;
-  if (!membership || !ws) throw new Error("This account is not a member of any workspace.");
+  if (!membership || !ws) {
+    throw new Error("Your account has a workspace, but it isn't visible to your session. Check the row-level security policies on workspace_members and workspaces.");
+  }
 
   return {
     demo: false, supabase, role: membership.role,
@@ -57,7 +80,7 @@ export const getContext = cache(async (): Promise<Ctx> => {
       email: profile?.email || auth.user.email || "",
       role: membership.role,
     },
-    workspace: { id: ws.id, name: ws.name, plan: ws.plan, timezone: ws.timezone, monthlySpendLimit: Number(ws.monthly_spend_limit) },
+    workspace: { id: ws.id, name: ws.name, plan: ws.plan, timezone: ws.timezone, monthlySpendLimit: Number(ws.monthly_spend_limit), embeddingProvider: ws.embedding_provider },
   };
 });
 

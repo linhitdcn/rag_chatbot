@@ -52,13 +52,13 @@ export async function ingestSource(sourceId: string): Promise<void> {
     }
     if (chunks.length === 0) throw new Error("No readable text was found in this source.");
 
-    const embeddings = await embedTexts(source.workspace_id, chunks.map((c) => c.content));
+    const { embeddings, model } = await embedTexts(source.workspace_id, chunks.map((c) => c.content));
 
     // Replace old chunks only after the new ones are ready, so a failed re-sync keeps the previous index.
     await admin.from("chunks").delete().eq("source_id", sourceId);
     const rows = chunks.map((c, i) => ({
       workspace_id: source.workspace_id, source_id: sourceId, chunk_index: i, page: c.page ?? null,
-      token_count: c.tokenCount || approxTokens(c.content), content: c.content, embedding: JSON.stringify(embeddings[i]),
+      token_count: c.tokenCount || approxTokens(c.content), content: c.content, embedding: JSON.stringify(embeddings[i]), embedding_model: model,
     }));
     for (let i = 0; i < rows.length; i += INSERT_BATCH) {
       const { error } = await admin.from("chunks").insert(rows.slice(i, i + INSERT_BATCH));

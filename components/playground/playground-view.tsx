@@ -67,6 +67,7 @@ function PlaygroundChat({ bots, demo }: { bots: Bot[]; demo: boolean }) {
   const [busy, setBusy] = React.useState(false);
   const [inspect, setInspect] = React.useState<Inspect | null>(null);
   const [qaOpen, setQaOpen] = React.useState(false);
+  const [linkIds, setLinkIds] = React.useState<string[]>([]);
   const endRef = React.useRef<HTMLDivElement>(null);
   const timers = React.useRef<ReturnType<typeof setTimeout>[]>([]);
   const abort = React.useRef<AbortController | null>(null);
@@ -203,7 +204,7 @@ function PlaygroundChat({ bots, demo }: { bots: Bot[]; demo: boolean }) {
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h2 className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4 text-primary" /> Retrieval inspector</h2>
             {inspect && lastAnswered && (
-              <Button size="xs" variant="outline" onClick={() => setQaOpen(true)}><BookmarkPlus /> Copy as Q&A</Button>
+              <Button size="xs" variant="outline" onClick={() => { setLinkIds([botId]); setQaOpen(true); }}><BookmarkPlus /> Copy as Q&A</Button>
             )}
           </div>
           {!inspect ? (
@@ -242,9 +243,10 @@ function PlaygroundChat({ bots, demo }: { bots: Bot[]; demo: boolean }) {
 
       <QaDialog
         open={qaOpen} onOpenChange={setQaOpen}
+        bots={bots.map((b) => ({ id: b.id, name: b.name }))} botIds={linkIds} onBotIdsChange={setLinkIds}
         initial={{ question: inspect?.question, answer: inspect?.answer.replace(/\s?\[\d+\]/g, "") }}
         onSave={async (v) => {
-          const res = await createQaSource(v);
+          const res = await createQaSource(v, linkIds);
           if (!res.ok) return void toast.error(res.error);
           toast.success("Saved as curated Q&A"); setQaOpen(false);
         }}

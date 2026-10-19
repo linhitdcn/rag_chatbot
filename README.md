@@ -21,7 +21,10 @@ writes are no-ops. With them set, `proxy.ts` refreshes the Supabase session and 
 ### Connect Supabase
 
 1. Create a Supabase project and fill `.env.local` (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`).
+   `SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`, `NEXT_PUBLIC_APP_URL`). For zero cost use the free tiers:
+   a Gemini key from <https://aistudio.google.com/apikey> (also the default embedding provider) and optionally a
+   Groq key from <https://console.groq.com/keys>. Either put them in `.env.local` or paste them in the app under
+   Settings → API Keys (those take priority).
 2. Apply every file in [supabase/migrations/](supabase/migrations/) in order (`supabase db push`, or paste them into
    the SQL editor). They create the schema + RLS, the `documents` Storage bucket, retrieval/usage functions,
    widget settings and the encrypted `provider_keys` table.
@@ -64,6 +67,20 @@ supabase/migrations  SQL schema + RLS policies
   the `Referer` — it deters casual embedding but is not a hard security boundary.
 - **Keys:** workspace API keys are verified against the provider, encrypted with AES-256-GCM (`ENCRYPTION_KEY`) and
   bound to their row; the browser only ever sees the last 4 characters.
+
+## Free tiers and rate limits
+
+Supported providers: **Google Gemini** and **Groq** (free tiers), **OpenAI** and **Anthropic** (paid). Each bot picks
+its own provider/model. Free tiers are rate limited, so when a request hits a limit:
+
+- visitors see a generic "temporarily unavailable, try again" message (no internals leaked);
+- the playground shows the real reason and which model to switch away from;
+- the bot is flagged (`bots.last_error`): a warning appears on the Chatbots list and on the bot's page, and clears on
+  the next successful answer. An admin then switches the bot to another model/provider in its Model tab.
+
+Embeddings use Gemini (`gemini-embedding-001`, 1536 dims) by default or OpenAI, chosen in Settings → General. Vectors
+from different models aren't comparable, so each chunk stores its model and changing the provider re-processes every
+source. Groq and Anthropic don't offer embeddings (chat only).
 
 ## Known limits
 

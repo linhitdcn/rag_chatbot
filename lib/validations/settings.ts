@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { EMBEDDING_PROVIDERS } from "@/lib/ai/providers";
 
 export const workspaceSchema = z.object({
   name: z.string().min(2, "Workspace name is too short").max(60),
   timezone: z.string().min(1),
+  embeddingProvider: z.enum(EMBEDDING_PROVIDERS),
 });
 export const inviteSchema = z.object({
   email: z.string().email("Enter a valid email address"),

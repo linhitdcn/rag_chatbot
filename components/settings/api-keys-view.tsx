@@ -8,20 +8,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PROVIDER_IDS, PROVIDERS, type Provider } from "@/lib/ai/providers";
 import { removeProviderKey, saveProviderKey, testProviderKey } from "@/lib/actions/keys";
 import { apiKeySchema } from "@/lib/validations/settings";
 
-type Provider = "openai" | "anthropic";
-const providers: { id: Provider; name: string; prefix: string }[] = [
-  { id: "openai", name: "OpenAI", prefix: "sk-" },
-  { id: "anthropic", name: "Anthropic", prefix: "sk-ant-" },
-];
+const providers = PROVIDER_IDS.map((id) => ({ id, ...PROVIDERS[id], prefix: PROVIDERS[id].keyPrefix }));
+const blank = () => Object.fromEntries(PROVIDER_IDS.map((p) => [p, ""])) as Record<Provider, string>;
 
 export function ApiKeysView({ initial, canEdit }: { initial: Record<Provider, string | null>; canEdit: boolean }) {
   // Only the masked last4 is ever held in the browser; the full key is encrypted server-side.
   const [saved, setSaved] = React.useState<Record<Provider, string | null>>(initial);
-  const [draft, setDraft] = React.useState<Record<Provider, string>>({ openai: "", anthropic: "" });
-  const [error, setError] = React.useState<Record<Provider, string>>({ openai: "", anthropic: "" });
+  const [draft, setDraft] = React.useState<Record<Provider, string>>(blank);
+  const [error, setError] = React.useState<Record<Provider, string>>(blank);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [removing, setRemoving] = React.useState<Provider | null>(null);
 
@@ -48,7 +46,7 @@ export function ApiKeysView({ initial, canEdit }: { initial: Record<Provider, st
       {providers.map((p) => (
         <Card key={p.id} className="shadow-none">
           <CardHeader className="flex-row items-start justify-between">
-            <div className="space-y-1.5"><CardTitle>{p.name}</CardTitle><CardDescription>Used for chat completions{p.id === "openai" ? " and embeddings" : ""}.</CardDescription></div>
+            <div className="space-y-1.5"><CardTitle className="flex items-center gap-2">{p.name}{p.free && <Badge variant="secondary">Free tier</Badge>}</CardTitle><CardDescription>{p.note} <a href={p.keyUrl} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">Get a key</a></CardDescription></div>
             {saved[p.id] ? <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 text-success"><CheckCircle2 className="size-3" /> Connected</Badge> : <Badge variant="outline">Not set</Badge>}
           </CardHeader>
           <CardContent className="space-y-3">

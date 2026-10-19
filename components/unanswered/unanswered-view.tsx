@@ -17,6 +17,7 @@ import type { UnansweredQuestion } from "@/lib/types";
 export function UnansweredView({ initial, bots }: { initial: UnansweredQuestion[]; bots: { id: string; name: string }[] }) {
   const [items, setItems] = React.useState<UnansweredQuestion[]>(initial);
   const [active, setActive] = React.useState<UnansweredQuestion | null>(null);
+  const [linkIds, setLinkIds] = React.useState<string[]>([]);
   const open = items.filter((i) => i.status === "open").sort((a, b) => b.count - a.count);
 
   async function resolve(id: string, status: Exclude<UnansweredQuestion["status"], "open">) {
@@ -49,7 +50,7 @@ export function UnansweredView({ initial, bots }: { initial: UnansweredQuestion[
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => setActive(q)}><Plus /> Add answer</Button>
+                  <Button size="sm" onClick={() => { setLinkIds([q.botId]); setActive(q); }}><Plus /> Add answer</Button>
                   <Button size="sm" variant="ghost" onClick={async () => { if (await resolve(q.id, "dismissed")) toast.success("Question dismissed"); }}><EyeOff /> Dismiss</Button>
                 </div>
               </Card>
@@ -59,9 +60,10 @@ export function UnansweredView({ initial, bots }: { initial: UnansweredQuestion[
       )}
       <QaDialog
         open={!!active} onOpenChange={(o) => !o && setActive(null)} initial={{ question: active?.question }}
+        bots={bots} botIds={linkIds} onBotIdsChange={setLinkIds}
         onSave={async (v) => {
           if (!active) return;
-          const created = await createQaSource(v);
+          const created = await createQaSource(v, linkIds);
           if (!created.ok) return void toast.error(created.error);
           if (await resolve(active.id, "answered")) toast.success("Answer saved to Knowledge Base");
           setActive(null);

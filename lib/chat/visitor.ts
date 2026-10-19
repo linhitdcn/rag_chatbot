@@ -11,6 +11,7 @@ export interface OwnedConversation {
   id: string;
   workspace_id: string;
   bot_id: string;
+  mode: "bot" | "waiting" | "human";
 }
 
 /**
@@ -24,7 +25,7 @@ export async function findOwnedConversation(botPublicId: unknown, visitorId: unk
   const admin = createAdminClient();
   const { data: bot } = await admin.from("bots").select("id").eq("public_id", botPublicId).maybeSingle();
   if (!bot) return null;
-  const { data } = await admin.from("conversations").select("id, workspace_id, bot_id")
+  const { data } = await admin.from("conversations").select("id, workspace_id, bot_id, mode")
     .eq("id", conversationId).eq("bot_id", bot.id).eq("visitor", visitorKey(visitorId)).maybeSingle<OwnedConversation>();
   return data ?? null;
 }

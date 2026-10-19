@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EMBEDDING_PROVIDERS, PROVIDERS } from "@/lib/ai/providers";
 import { updateWorkspace } from "@/lib/actions/workspace";
 import type { Workspace } from "@/lib/types";
 import { workspaceSchema, type WorkspaceValues } from "@/lib/validations/settings";
@@ -18,7 +19,7 @@ const ZONES = ["Asia/Ho_Chi_Minh", "UTC", "America/New_York", "America/Los_Angel
 
 export function GeneralForm({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const { register, control, handleSubmit, reset, formState: { errors, isDirty, isSubmitting } } = useForm<WorkspaceValues>({
-    resolver: zodResolver(workspaceSchema) as never, defaultValues: { name: workspace.name, timezone: workspace.timezone },
+    resolver: zodResolver(workspaceSchema) as never, defaultValues: { name: workspace.name, timezone: workspace.timezone, embeddingProvider: workspace.embeddingProvider },
   });
   React.useEffect(() => {
     if (!isDirty) return;
@@ -53,6 +54,18 @@ export function GeneralForm({ workspace, canEdit }: { workspace: Workspace; canE
                 <SelectContent>{ZONES.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}</SelectContent>
               </Select>
             )} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ws-embed">Embedding provider</Label>
+            <Controller control={control} name="embeddingProvider" render={({ field }) => (
+              <Select value={field.value} onValueChange={field.onChange}>
+                <SelectTrigger id="ws-embed" disabled={!canEdit} className="w-full sm:w-72"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {EMBEDDING_PROVIDERS.map((p) => <SelectItem key={p} value={p}>{PROVIDERS[p].name}{PROVIDERS[p].free ? " · free tier" : ""}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )} />
+            <p className="text-xs text-muted-foreground">Turns your documents into searchable vectors. Changing it re-processes every source, and bots can&apos;t answer from them until that finishes.</p>
           </div>
         </CardContent>
         <CardFooter className="justify-end gap-2 border-t pt-6">

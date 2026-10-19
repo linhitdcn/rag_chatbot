@@ -1,9 +1,11 @@
 import { streamText } from "ai";
 import { getProviderKey } from "@/lib/ai/keys";
+import { EMBEDDING_MODELS, PROVIDERS, type Provider } from "@/lib/ai/providers";
 import { getLanguageModel } from "@/lib/ai/models";
-import { embedQuery } from "@/lib/ingest/embed";
+import { embedQuery, getEmbeddingProvider } from "@/lib/ingest/embed";
 import { estimateCostUsd } from "@/lib/pricing";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { adminMessage, classifyError, VISITOR_ERROR } from "./errors";
 import { MAX_HISTORY, MAX_MESSAGE_CHARS, type ChatEvent, type ChatTurn, type RetrievedChunk } from "./types";
 
 /** The bot columns the engine needs (a row from `bots`). */
@@ -11,7 +13,7 @@ export interface EngineBot {
   id: string;
   workspace_id: string;
   name: string;
-  provider: "openai" | "anthropic";
+  provider: Provider;
   model: string;
   tone: "friendly" | "professional" | "concise";
   system_prompt: string;
@@ -28,6 +30,8 @@ export interface ChatRequest {
   history: ChatTurn[]; // ends with the user's new message
   /** Persist the exchange as a conversation (widget). The playground passes null and nothing is stored. */
   persist: { conversationId: string | null; visitor: string } | null;
+  /** Who sees errors: admins get actionable detail, anonymous visitors a generic message. */
+  audience: "admin" | "visitor";
   signal?: AbortSignal;
 }
 
@@ -78,6 +82,13 @@ async function overSpendLimit(workspaceId: string) {
   return estimateCostUsd(Number(tokens ?? 0)) >= Number(ws.monthly_spend_limit);
 }
 
+/** Lets admins see (and act on) provider problems; cleared again by the next successful answer. */
+async function setBotError(botId: string, error: { kind: string; provider: Provider; model: string; message: string } | null) {
+  const admin = createAdminClient();
+  if (error) await admin.from("bots").update({ last_error: { ...error, at: new Date().toISOString() } }).eq("id", botId);
+  else await admin.from("bots").update({ last_error: null }).eq("id", botId).not("last_error", "is", null);
+}
+
 async function recordUnanswered(bot: EngineBot, question: string) {
   const admin = createAdminClient();
   const normalized = question.trim().replace(/\s+/g, " ").toLowerCase();
@@ -117,14 +128,14 @@ async function persistExchange(req: ChatRequest, result: {
 
   const base = { conversation_id: conversationId, workspace_id: bot.workspace_id, bot_id: bot.id };
   const { data: rows, error } = await admin.from("messages").insert([
-    { ...base, role: "user", content: question },
+    { ...base, role: "user", content: question, unanswered: false },
     {
       ...base, role: "assistant", content: result.answer, model: result.model, tokens: result.tokens, latency_ms: result.latencyMs,
       unanswered: result.unanswered,
       citations: result.chunks.map((c) => ({ n: c.n, sourceName: c.source, score: c.score, snippet: c.text.slice(0, 280) })),
       created_at: new Date(Date.now() + 1).toISOString(), // keeps the assistant row after the user row
     },
-  ]).select("id, role");
+  ], { defaultToNull: false }).select("id, role"); // columns absent from a row use their DB default instead of NULL
   if (error) throw new Error(error.message);
 
   const { count: total } = await admin.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId);
@@ -136,11 +147,34 @@ async function persistExchange(req: ChatRequest, result: {
   return { conversationId, messageId: rows?.find((r) => r.role === "assistant")?.id as string };
 }
 
+/** Case-, accent- and punctuation-insensitive form of a question, used to match curated Q&A exactly. */
+export function normalizeQuestion(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Curated Q&A the visitor's message matches word-for-word (after normalizing). Very short questions like "hello" embed
+ * poorly and miss the similarity threshold, so an exact match answers directly: it's what the owner wrote, no LLM needed.
+ * If several linked answers share a question, the newest wins.
+ */
+async function findCuratedAnswer(botId: string, question: string): Promise<{ name: string; question: string; answer: string } | null> {
+  const wanted = normalizeQuestion(question);
+  if (!wanted) return null;
+  const { data } = await createAdminClient().from("sources")
+    .select("name, question, answer, created_at, bot_sources!inner(bot_id)")
+    .eq("type", "qa").eq("status", "ready").eq("bot_sources.bot_id", botId)
+    .order("created_at", { ascending: false }).limit(500);
+  const hit = (data ?? []).find((s) => s.question && s.answer && normalizeQuestion(s.question as string) === wanted);
+  return hit ? { name: hit.name as string, question: hit.question as string, answer: (hit.answer as string).trim() } : null;
+}
+
 /** Retrieve → (fallback | generate) → persist. Yields NDJSON-ready events. */
 export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
   const { bot, history } = req;
   const started = Date.now();
   const question = history[history.length - 1].content;
+  let stage: { provider: Provider; model: string } = { provider: bot.provider, model: bot.model };
 
   try {
     if (await overSpendLimit(bot.workspace_id)) {
@@ -150,13 +184,32 @@ export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
       return;
     }
 
+    const curated = await findCuratedAnswer(bot.id, question).catch(() => null);
+    if (curated) {
+      const chunks: RetrievedChunk[] = [{ n: 1, source: curated.name, score: 1, text: `Q: ${curated.question}\nA: ${curated.answer}` }];
+      yield { t: "meta", conversationId: req.persist?.conversationId ?? null, chunks };
+      yield { t: "delta", text: curated.answer };
+      const latencyMs = Date.now() - started;
+      const saved = await persistExchange(req, { answer: curated.answer, chunks, unanswered: false, model: "curated-qa", latencyMs, tokens: 0 })
+        .catch((e) => { console.error("[chat] Couldn't save the conversation:", e); return null; });
+      yield {
+        t: "done", conversationId: saved?.conversationId ?? req.persist?.conversationId ?? null, messageId: saved?.messageId ?? null,
+        unanswered: false, model: "curated-qa", latencyMs, tokens: { input: 0, output: 0 },
+      };
+      return;
+    }
+
     const apiKey = await getProviderKey(bot.workspace_id, bot.provider);
-    if (!apiKey) throw new Error(`No ${bot.provider === "openai" ? "OpenAI" : "Anthropic"} API key is configured for this bot.`);
+    if (!apiKey) throw new Error(`No ${PROVIDERS[bot.provider].name} API key is configured for this bot.`);
 
     const admin = createAdminClient();
-    const embedding = await embedQuery(bot.workspace_id, question);
+    // Track which provider/model is in play so a failure is attributed correctly.
+    const embeddingProvider = await getEmbeddingProvider(bot.workspace_id);
+    stage = { provider: embeddingProvider, model: EMBEDDING_MODELS[embeddingProvider].id };
+    const { embedding, model: embeddingModel } = await embedQuery(bot.workspace_id, question);
     const { data: matches, error } = await admin.rpc("match_chunks", {
-      query_embedding: JSON.stringify(embedding), p_bot_id: bot.id, match_count: bot.top_k, min_similarity: bot.similarity_threshold,
+      query_embedding: JSON.stringify(embedding), p_bot_id: bot.id, p_embedding_model: embeddingModel,
+      match_count: bot.top_k, min_similarity: bot.similarity_threshold,
     });
     if (error) throw new Error(error.message);
     const chunks: RetrievedChunk[] = ((matches ?? []) as MatchRow[]).map((m, i) => ({
@@ -171,6 +224,9 @@ export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
     if (unanswered) {
       answer = bot.fallback_message; // nothing relevant: don't spend an LLM call guessing
     } else {
+      stage = { provider: bot.provider, model: bot.model };
+      // textStream never surfaces provider errors, so capture them here and rethrow after the loop.
+      let streamError: unknown = null;
       const result = streamText({
         model: getLanguageModel(bot.provider, bot.model, apiKey),
         system: buildSystemPrompt(bot, chunks),
@@ -178,6 +234,7 @@ export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
         temperature: bot.temperature,
         maxOutputTokens: bot.max_tokens,
         abortSignal: req.signal,
+        onError: ({ error }) => { streamError = error; },
       });
       // The first event is sent before generation so the client can show the retrieved context immediately.
       yield { t: "meta", conversationId: req.persist?.conversationId ?? null, chunks };
@@ -185,6 +242,8 @@ export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
         answer += text;
         yield { t: "delta", text };
       }
+      if (streamError) throw streamError;
+      if (!answer.trim()) throw new Error("The model returned an empty response.");
       const usage = await result.totalUsage;
       inputTokens = usage.inputTokens ?? 0;
       outputTokens = usage.outputTokens ?? 0;
@@ -196,17 +255,21 @@ export async function* runChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
       await recordUnanswered(bot, question).catch(() => undefined);
     }
 
+    if (!unanswered) await setBotError(bot.id, null).catch(() => undefined);
     const latencyMs = Date.now() - started;
     const saved = await persistExchange(req, {
       answer, chunks, unanswered, model: bot.model, latencyMs, tokens: inputTokens + outputTokens,
-    }).catch(() => null);
+    }).catch((e) => { console.error("[chat] Couldn't save the conversation:", e); return null; });
     yield {
       t: "done", conversationId: saved?.conversationId ?? req.persist?.conversationId ?? null, messageId: saved?.messageId ?? null, unanswered, model: bot.model, latencyMs,
       tokens: { input: inputTokens, output: outputTokens },
     };
   } catch (e) {
     if (req.signal?.aborted) return;
-    yield { t: "error", message: e instanceof Error ? e.message : "Something went wrong" };
+    const classified = classifyError(e);
+    const message = adminMessage(classified, stage.provider, stage.model);
+    await setBotError(bot.id, { kind: classified.kind, provider: stage.provider, model: stage.model, message }).catch(() => undefined);
+    yield { t: "error", message: req.audience === "admin" ? message : VISITOR_ERROR };
   }
 }
 

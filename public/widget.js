@@ -68,6 +68,10 @@
 
     button.addEventListener("click", function () { setOpen(!open); });
     window.addEventListener("resize", applyMobile);
+    // Click outside the chat (clicks inside the iframe never reach this document) closes it.
+    document.addEventListener("pointerdown", function (e) {
+      if (open && e.target !== frame && !button.contains(e.target)) setOpen(false);
+    });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && open) { setOpen(false); button.focus(); } });
     window.addEventListener("message", function (e) {
       if (e.origin === origin && e.source === frame.contentWindow && e.data && e.data.type === "kd:close") setOpen(false);
